@@ -1,0 +1,167 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r,echo=FALSE,message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(rtweet)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+library(wordcloud)
+library(tidytext)
+library(igraph)
+library(twitteR)
+library(rtweet)
+library("ROAuth")
+library(httpuv)
+library(arulesViz)
+
+#情報の入力
+#consumerKey <- "HKfGKdSWAfP5J3JmXpLtiFZOU"
+#consumerSecret <- "Q3seBCU6FTyQtpGDD2NVS6H7Fsa9EzGNLdD7BJ2LxRpldl20vz"
+#accessToken <- "106618656-qH4Htbn5vtUK9iL85xqzOJyQcUDR62gWDj0sHVG1"
+#accessSecret <- "NAj5f0eUsptu4aj0v5RCMFpXJSt5JhC0Y2sI30FguroeZ"
+
+cred <- OAuthFactory$new(consumerKey='HKfGKdSWAfP5J3JmXpLtiFZOU',
+                         consumerSecret='Q3seBCU6FTyQtpGDD2NVS6H7Fsa9EzGNLdD7BJ2LxRpldl20vz',
+                         requestURL='https://api.twitter.com/oauth/request_token',
+                         accessURL='https://api.twitter.com/oauth/access_token',
+                         authURL='https://api.twitter.com/oauth/authorize')
+#cred$handshake(cainfo="cacert.pem")
+save(cred, file="twitter authentication.Rdata")
+load("twitter authentication.Rdata")
+library(base64enc)
+
+
+#処理の準備
+#httr_oauth_chcheを保存
+#options(httr_oauth_cache = TRUE)
+#認証情報の取得
+setup_twitter_oauth("HKfGKdSWAfP5J3JmXpLtiFZOU", 
+                    "Q3seBCU6FTyQtpGDD2NVS6H7Fsa9EzGNLdD7BJ2LxRpldl20vz",
+                    "106618656-qH4Htbn5vtUK9iL85xqzOJyQcUDR62gWDj0sHVG1", 
+                    "NAj5f0eUsptu4aj0v5RCMFpXJSt5JhC0Y2sI30FguroeZ")
+
+```
+
+##ツイッター検索ワード：アクサダイレクト、アクサ損保、アクサ損害保険、アクサ
+```{r}
+SearchWords <- c("アクサダイレクト OR アクサ損保 OR アクサ損害保険 OR アクサ")
+#SearchWords <- c("自動車保険")
+TwGetDF <- twListToDF(searchTwitter(iconv(SearchWords,"CP932","UTF-8"), n = 2000, resultType = "mixed"))
+
+#df <- search_tweets("安倍", n =20)
+
+#Tweets by day
+TwGetDF %>% 
+        mutate(date = as_date(created)) %>% 
+        count(date) %>% 
+        ggplot(aes(date, n)) + geom_col(fill = "skyblue3") +  
+        labs(x = "Date", y = "Tweets", title = "#tweets per day") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+#Tweets by day and time
+TwGetDF %>% 
+        mutate(datetime = as_datetime(created), hour = hour(datetime)) %>% 
+        group_by(date = as_date(datetime), hour) %>% 
+        summarise(count = n()) %>% 
+        filter(date >= as_date("2017-08-01"), date <= as_date(today())) %>% 
+        ggplot(aes(hour, count)) + geom_col(fill = "skyblue3") + facet_grid(strftime(date, "%b %d") ~ .) + 
+        labs(x = "Hour", y = "Tweets", title = "#tweets by time of day") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+#Top tweeters
+TwGetDF %>% 
+        count(screenName) %>% 
+        filter(n >= 3) %>% 
+        ggplot(aes(reorder(screenName, n), n)) + geom_col(fill = "skyblue3") + coord_flip() + 
+        labs(x = "Screen Name", y = "Tweets", title = "tweets by user", subtitle = "users with >= 5 tweets") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+#source
+#TwGetDF %>% 
+#       distinct(screenName, source) %>%
+#        count(source) %>% 
+#        filter(n >= 5) %>%
+#        ggplot(aes(reorder(source, n), n)) + geom_col(fill = "skyblue3") + coord_flip() + 
+#        labs(x = "Source", y = "Tweets", title = "#vizbi 2017 tweets by source", subtitle = "sources with >= 5 tweets") + 
+#        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+```
+
+##Reply
+
+```{r}
+replies <- TwGetDF %>% 
+        filter(!is.na(replyToSN)) %>% 
+        select(screenName, replyToSN) %>% 
+        graph.data.frame(directed = TRUE)
+
+V(replies)$label <- V(replies)$name
+V(replies)$id    <- V(replies)$name
+
+write_graph(replies, file = "replies.graphml", format = "graphml")
+
+plot(replies, margin=-0.25)
+```
+
+##Retweet
+
+```{r}
+#retweet
+TwGetDF %>% 
+        count(retweetCount) %>% 
+        filter(retweetCount < 100) %>% 
+        ggplot(aes(retweetCount, n)) + geom_col(fill = "skyblue3") + 
+        labs(x = "Is retweet", y = "Tweets", title = "#tweets by retweet status") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+#retweet count
+#TwGetDF %>% 
+#        ggplot(aes(retweetCount)) + geom_histogram(bins = max(TwGetDF$retweetCount), fill = "skyblue3") +
+#        labs(x = "Retweet count", y = "Tweets", title = "#vizbi 2017 distribution of retweets per tweet") + 
+#        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+
+TwGetDF %>% 
+        #filter(is.na(retweetCount)) %>% 
+        select(screenName, text, retweetCount) %>% 
+        arrange(desc(retweetCount)) %>% 
+        distinct() %>%
+        slice(1:10) %>% 
+        kable(format = "html")
+
+TwGetDF %>% 
+        mutate(has_favorite = ifelse(favoriteCount > 0, TRUE, FALSE)) %>% 
+        count(has_favorite) %>%
+        ggplot(aes(has_favorite, n)) + geom_col(fill = "skyblue3") + 
+        labs(x = "Has favorite", y = "Tweets", title = "tweets by favorited status") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+
+TwGetDF %>% 
+        ggplot(aes(favoriteCount)) + geom_histogram(bins = max(TwGetDF$favoriteCount), fill = "skyblue3") +
+        labs(x = "Favorite count", y = "Tweets", title = "distribution of favorites per tweet") + 
+        theme(axis.text = element_text(size = 12), axis.title = element_text(size = 12))
+
+TwGetDF %>% 
+        select(screenName, text, favoriteCount) %>% 
+        arrange(desc(favoriteCount)) %>% 
+        distinct() %>%
+        slice(1:10) %>% 
+        kable(format = "html")
+
+```
+
+##他社ツイート
+```{r}
+outdf <- data.frame(row.names=1:30)
+for(i in c("アクサダイレクト OR アクサ損保 OR アクサ損害保険 OR アクサ","ソニー損保","．イーデザイン", "SBI OR SBI損保", "セゾン","チューリッヒ", "三井ダイレクト")){
+        SearchWords <- c(i)
+        TwGetDF <- twListToDF(searchTwitter(iconv(SearchWords,"CP932","UTF-8"), n = 30))
+        DF <- data.frame(TwGetDF$text, TwGetDF$created, TwGetDF$retweetCount)
+        DF <- DF[order(-DF$TwGetDF.retweetCount),]
+        colnames(DF) <- c(i,"create","retweet")
+        outdf <- cbind(outdf,DF)
+}
+#kable(outdf,format = "markdown")
+outdf %>%
+        kable(format = "html")
+```
