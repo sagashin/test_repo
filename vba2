@@ -1,0 +1,38 @@
+Sub CopyPasteData()
+
+    ' A1からD1の情報を取得
+    Dim filePath As String
+    Dim fileName As String
+    Dim sheetName As String
+    Dim cellRange As String
+    
+    filePath = ThisWorkbook.Sheets(1).Range("A1").Value ' ファイルパス
+    fileName = ThisWorkbook.Sheets(1).Range("B1").Value ' ファイル名
+    sheetName = ThisWorkbook.Sheets(1).Range("C1").Value ' シート名
+    cellRange = ThisWorkbook.Sheets(1).Range("D1").Value ' セル範囲
+    
+    ' フルパスの作成
+    Dim fullPath As String
+    fullPath = filePath & "\" & fileName
+    
+    ' 他のExcelファイルを開く
+    Dim wb As Workbook
+    On Error GoTo ErrorHandler
+    Set wb = Workbooks.Open(fullPath)
+    
+    ' コピーするデータを取得
+    Dim copyRange As Range
+    Set copyRange = wb.Sheets(sheetName).Range(cellRange)
+    
+    ' 現在のワークブックのE1にデータを貼り付け
+    ThisWorkbook.Sheets(1).Range("E1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
+    
+    ' 開いたワークブックを閉じる（保存しない）
+    wb.Close False
+    
+    MsgBox "データのコピーが完了しました！"
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "エラーが発生しました。ファイルパス、シート名、セル範囲を確認してください。"
+End Sub
