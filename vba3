@@ -1,0 +1,33 @@
+Sub CopyPasteFromAnotherWorkbook()
+    Dim sourcePath As String
+    Dim sourceFile As String
+    Dim sourceSheet As String
+    Dim sourceRange As String
+    Dim destCell As Range
+    Dim sourceWorkbook As Workbook
+    Dim currentWorkbook As Workbook
+
+    ' 現在のワークブックを設定
+    Set currentWorkbook = ThisWorkbook
+
+    ' セルから情報を取得
+    sourcePath = currentWorkbook.Sheets(1).Range("A1").Value
+    sourceFile = currentWorkbook.Sheets(1).Range("B1").Value
+    sourceSheet = currentWorkbook.Sheets(1).Range("C1").Value
+    sourceRange = currentWorkbook.Sheets(1).Range("D1").Value
+    Set destCell = currentWorkbook.Sheets(1).Range("E1")
+
+    ' ソースワークブックを開く
+    Set sourceWorkbook = Workbooks.Open(sourcePath & "\" & sourceFile)
+
+    ' コピー＆ペースト
+    sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
+    destCell.PasteSpecial Paste:=xlPasteAll
+
+    ' ソースワークブックを閉じる（保存せずに）
+    sourceWorkbook.Close SaveChanges:=False
+
+    ' メッセージを表示
+    MsgBox "コピー＆ペーストが完了しました。"
+
+End Sub
