@@ -1,4 +1,4 @@
-Sub CopyPasteFromAnotherWorkbook()
+Sub CopyPasteValuesAndFormatsFromPasswordProtectedWorkbook()
     Dim sourcePath As String
     Dim sourceFile As String
     Dim sourceSheet As String
@@ -6,6 +6,7 @@ Sub CopyPasteFromAnotherWorkbook()
     Dim destCell As Range
     Dim sourceWorkbook As Workbook
     Dim currentWorkbook As Workbook
+    Dim password As String
 
     ' 現在のワークブックを設定
     Set currentWorkbook = ThisWorkbook
@@ -16,18 +17,19 @@ Sub CopyPasteFromAnotherWorkbook()
     sourceSheet = currentWorkbook.Sheets(1).Range("C1").Value
     sourceRange = currentWorkbook.Sheets(1).Range("D1").Value
     Set destCell = currentWorkbook.Sheets(1).Range("E1")
+    password = currentWorkbook.Sheets(1).Range("F1").Value ' パスワードをセルF1から取得
 
-    ' ソースワークブックを開く
-    Set sourceWorkbook = Workbooks.Open(sourcePath & "\" & sourceFile)
+    ' ソースワークブックを開く（パスワード付き）
+    Set sourceWorkbook = Workbooks.Open(Filename:=sourcePath & "\" & sourceFile, Password:=password)
 
-    ' コピー＆ペースト
+    ' コピー＆ペースト（値と書式）
     sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
-    destCell.PasteSpecial Paste:=xlPasteAll
+    destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
 
     ' ソースワークブックを閉じる（保存せずに）
     sourceWorkbook.Close SaveChanges:=False
 
     ' メッセージを表示
-    MsgBox "コピー＆ペーストが完了しました。"
+    MsgBox "値と書式のコピー＆ペーストが完了しました。"
 
 End Sub
