@@ -5,11 +5,13 @@ Sub CopyPasteData()
     Dim fileName As String
     Dim sheetName As String
     Dim cellRange As String
+    Dim pasteSheetName As String
     
     filePath = ThisWorkbook.Sheets(1).Range("A1").Value ' ファイルパス
     fileName = ThisWorkbook.Sheets(1).Range("B1").Value ' ファイル名
     sheetName = ThisWorkbook.Sheets(1).Range("C1").Value ' シート名
     cellRange = ThisWorkbook.Sheets(1).Range("D1").Value ' セル範囲
+    pasteSheetName = ThisWorkbook.Sheets(1).Range("E1").Value ' 貼り付け先のシート名
     
     ' フルパスの作成
     Dim fullPath As String
@@ -24,8 +26,20 @@ Sub CopyPasteData()
     Dim copyRange As Range
     Set copyRange = wb.Sheets(sheetName).Range(cellRange)
     
-    ' 現在のワークブックのE1にデータを貼り付け
-    ThisWorkbook.Sheets(1).Range("E1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
+    ' 貼り付け先のシートを取得
+    Dim pasteSheet As Worksheet
+    On Error Resume Next
+    Set pasteSheet = ThisWorkbook.Sheets(pasteSheetName)
+    On Error GoTo 0
+    
+    If pasteSheet Is Nothing Then
+        MsgBox "貼り付け先のシートが存在しません。"
+        wb.Close False
+        Exit Sub
+    End If
+    
+    ' 貼り付け先のシートにデータを貼り付け
+    pasteSheet.Range("A1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
     
     ' 開いたワークブックを閉じる（保存しない）
     wb.Close False
