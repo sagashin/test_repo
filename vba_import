@@ -24,6 +24,8 @@ Sub ImportDataFromManagedSheet()
     ' 値を現在のブックに貼り付け
     ThisWorkbook.Sheets(destSheetName).Range(destCellRef).Value = importValue
 
+    ActiveSheet.Range("A1").Copy
+
     ' 外部ファイルを閉じる
     Workbooks(Dir(filePath)).Close SaveChanges:=False
 
