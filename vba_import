@@ -26,4 +26,7 @@ Sub ImportDataFromManagedSheet()
 
     ' 外部ファイルを閉じる
     Workbooks(Dir(filePath)).Close SaveChanges:=False
+
+    ' マクロ完了後に管理シートのF1に "Done" と入力
+    ThisWorkbook.Sheets("管理シート").Range("F1").Value = "Done"
 End Sub
