@@ -1,0 +1,29 @@
+Sub ImportDataFromManagedSheet()
+    Dim filePath As String
+    Dim sheetName As String
+    Dim cellRef As String
+    Dim destSheetName As String
+    Dim destCellRef As String
+    Dim importValue As Variant
+
+    ' 管理シートから情報を取得
+    With ThisWorkbook.Sheets("管理シート")
+        filePath = .Range("A1").Value
+        sheetName = .Range("B1").Value
+        cellRef = .Range("C1").Value
+        destSheetName = .Range("D1").Value
+        destCellRef = .Range("E1").Value
+    End With
+
+    ' 外部ファイルを開く
+    Workbooks.Open filePath
+
+    ' 値を取得
+    importValue = Workbooks(Dir(filePath)).Sheets(sheetName).Range(cellRef).Value
+
+    ' 値を現在のブックに貼り付け
+    ThisWorkbook.Sheets(destSheetName).Range(destCellRef).Value = importValue
+
+    ' 外部ファイルを閉じる
+    Workbooks(Dir(filePath)).Close SaveChanges:=False
+End Sub
