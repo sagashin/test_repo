@@ -1,0 +1,24 @@
+Sub UpdateData()
+    Dim wsSource As Worksheet
+    Dim wsDest As Worksheet
+    Dim cell As Range
+    Dim searchValue As String
+    Dim foundCell As Range
+
+    ' シートの設定
+    Set wsSource = ThisWorkbook.Sheets("取り込みシート")
+    Set wsDest = ThisWorkbook.Sheets("参照シート")
+
+    ' 検索値の設定
+    searchValue = "項目名"
+
+    ' 検索
+    Set foundCell = wsSource.Cells.Find(What:=searchValue, LookIn:=xlValues, LookAt:=xlWhole)
+
+    ' 見つかった場合の処理
+    If Not foundCell Is Nothing Then
+        wsDest.Range("A1").Value = foundCell.Offset(0, 1).Value
+    Else
+        MsgBox "項目が見つかりません"
+    End If
+End Sub
