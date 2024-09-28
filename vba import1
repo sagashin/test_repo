@@ -1,0 +1,52 @@
+Sub Get_Med_LI_Prem()
+    Dim sourcePath As String
+    Dim sourceFile As String
+    Dim sourceSheet As String
+    Dim sourceRange As String
+    Dim destCell As Range
+    Dim sourceWorkbook As Workbook
+    Dim currentWorkbook As Workbook
+    Dim password As String
+    Dim sourceRow As String
+    Dim destSheet As String
+    Dim destSheetCell As String
+
+    ' 現在のワークブックを設定
+    Set currentWorkbook = ThisWorkbook
+    
+    ' マクロの参照行を設定
+    sourceRow = 16
+    
+    destSheet = currentWorkbook.Sheets("Import").Range("E" & sourceRow).Value
+    destSheetCell = currentWorkbook.Sheets("Import").Range("F" & sourceRow).Value
+
+    ' セルから情報を取得
+    sourcePath = currentWorkbook.Sheets("Import").Range("A" & sourceRow).Value
+    sourceFile = currentWorkbook.Sheets("Import").Range("B" & sourceRow).Value
+    sourceSheet = currentWorkbook.Sheets("Import").Range("C" & sourceRow).Value
+    sourceRange = currentWorkbook.Sheets("Import").Range("D" & sourceRow).Value
+    Set destCell = currentWorkbook.Sheets(destSheet).Range(destSheetCell)
+    'password = currentWorkbook.Sheets("Import").Range("H8").Value ' パスワードをセルF1から取得
+    
+    Application.DisplayAlerts = False
+
+    ' ソースワークブックを開く（パスワード付き）
+    Set sourceWorkbook = Workbooks.Open(fileName:=sourcePath & "\" & sourceFile, ReadOnly:=True)
+    'Set sourceWorkbook = Workbooks.Open(fileName:=sourcePath & "\" & sourceFile, password:=password)
+
+    ' コピー＆ペースト（値と書式）
+    sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
+    destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+    
+    ActiveSheet.Range("A1").Copy
+
+    ' ソースワークブックを閉じる（保存せずに）
+    sourceWorkbook.Close SaveChanges:=False
+    
+
+        ' マクロ完了後に管理シートのF1に "Done" と入力
+    ThisWorkbook.Sheets("Import").Range("H" & sourceRow).Value = "Done"
+    
+    Call currentWorkbook.Sheets("Import").Activate
+
+End Sub
