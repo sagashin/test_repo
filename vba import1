@@ -54,7 +54,7 @@ Sub ImportData()
         ' 必須項目が入力されているか確認
         If sourcePath = "" Or sourceFile = "" Or sourceSheet = "" Or sourceRange = "" Or destSheet = "" Or destSheetCell = "" Then
             importSheet.Cells(i, "H").Value = "スキップ - 情報不足"
-            Continue For
+            GoTo NextIteration ' 次のループへ
         End If
         
         ' ステータスを更新
@@ -89,16 +89,18 @@ Sub ImportData()
         
         ' ログに記録
         With logSheet
-            .Cells(.Rows.Count, "A").End(xlUp).Offset(1, 0).Value = Now
-            .Cells(.Rows.Count, "B").End(xlUp).Value = sourceFile
-            .Cells(.Rows.Count, "C").End(xlUp).Value = "成功"
-            .Cells(.Rows.Count, "D").End(xlUp).Value = destSheet & "!" & destSheetCell & " に " & elapsedTime & " で取り込み完了"
+            Dim logLastRow As Long
+            logLastRow = .Cells(.Rows.Count, "A").End(xlUp).Row + 1
+            .Cells(logLastRow, "A").Value = Now
+            .Cells(logLastRow, "B").Value = sourceFile
+            .Cells(logLastRow, "C").Value = "成功"
+            .Cells(logLastRow, "D").Value = destSheet & "!" & destSheetCell & " に " & elapsedTime & " で取り込み完了"
         End With
         
         ' エラーハンドリング解除
         On Error GoTo 0
         DoEvents
-        Continue For
+        GoTo NextIteration ' 次のループへ
 
 ErrorHandler:
         ' エラー処理
@@ -107,10 +109,12 @@ ErrorHandler:
         
         ' エラー情報をログに記録
         With logSheet
-            .Cells(.Rows.Count, "A").End(xlUp).Offset(1, 0).Value = Now
-            .Cells(.Rows.Count, "B").End(xlUp).Value = sourceFile
-            .Cells(.Rows.Count, "C").End(xlUp).Value = "エラー"
-            .Cells(.Rows.Count, "D").End(xlUp).Value = Err.Description & "（" & elapsedTime & "）"
+            Dim logLastRow As Long
+            logLastRow = .Cells(.Rows.Count, "A").End(xlUp).Row + 1
+            .Cells(logLastRow, "A").Value = Now
+            .Cells(logLastRow, "B").Value = sourceFile
+            .Cells(logLastRow, "C").Value = "エラー"
+            .Cells(logLastRow, "D").Value = Err.Description & "（" & elapsedTime & "）"
         End With
         
         ' ソースワークブックを閉じる（開いている場合）
@@ -122,6 +126,8 @@ ErrorHandler:
         Err.Clear
         On Error GoTo 0
         DoEvents
+        ' 次のループへ
+NextIteration:
     Next i
     
     ' ステータスバーをリセット
