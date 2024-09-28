@@ -1,3 +1,146 @@
+Sub ImportData()
+    Dim sourcePath As String
+    Dim sourceFile As String
+    Dim sourceSheet As String
+    Dim sourceRange As String
+    Dim destCell As Range
+    Dim sourceWorkbook As Workbook
+    Dim currentWorkbook As Workbook
+    Dim destSheet As String
+    Dim destSheetCell As String
+    Dim importSheet As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim logSheet As Worksheet
+    Dim startTime As Double
+    Dim elapsedTime As String
+
+    ' 現在のワークブックとシートを設定
+    Set currentWorkbook = ThisWorkbook
+    Set importSheet = currentWorkbook.Sheets("Import")
+    
+    ' ログシートの作成または設定
+    On Error Resume Next
+    Set logSheet = currentWorkbook.Sheets("Import_Log")
+    On Error GoTo 0
+    If logSheet Is Nothing Then
+        Set logSheet = currentWorkbook.Sheets.Add(After:=currentWorkbook.Sheets(currentWorkbook.Sheets.Count))
+        logSheet.Name = "Import_Log"
+        ' ログシートにヘッダーを追加
+        With logSheet
+            .Range("A1") = "タイムスタンプ"
+            .Range("B1") = "ソースファイル"
+            .Range("C1") = "ステータス"
+            .Range("D1") = "詳細"
+        End With
+    End If
+
+    ' 「Import」シートのデータがある最終行を取得
+    lastRow = importSheet.Cells(importSheet.Rows.Count, "A").End(xlUp).Row
+    
+    ' 2行目から最終行までループ処理（1行目はヘッダーと想定）
+    For i = 2 To lastRow
+        ' タイマー開始
+        startTime = Timer
+        
+        ' 「Import」シートから情報を取得
+        sourcePath = Trim(importSheet.Cells(i, "A").Value)
+        sourceFile = Trim(importSheet.Cells(i, "B").Value)
+        sourceSheet = Trim(importSheet.Cells(i, "C").Value)
+        sourceRange = Trim(importSheet.Cells(i, "D").Value)
+        destSheet = Trim(importSheet.Cells(i, "E").Value)
+        destSheetCell = Trim(importSheet.Cells(i, "F").Value)
+        
+        ' 必須項目が入力されているか確認
+        If sourcePath = "" Or sourceFile = "" Or sourceSheet = "" Or sourceRange = "" Or destSheet = "" Or destSheetCell = "" Then
+            importSheet.Cells(i, "H").Value = "スキップ - 情報不足"
+            Continue For
+        End If
+        
+        ' ステータスを更新
+        importSheet.Cells(i, "H").Value = "処理中"
+        Application.StatusBar = "行 " & i - 1 & " を処理中..." & "（全 " & lastRow - 1 & " 行）"
+        
+        ' エラーハンドリング開始
+        On Error GoTo ErrorHandler
+        
+        ' ソースワークブックを開く
+        Set sourceWorkbook = Workbooks.Open(Filename:=sourcePath & "\" & sourceFile, ReadOnly:=True)
+        
+        ' デスティネーションシートが存在するか確認
+        If Not SheetExists(destSheet, currentWorkbook) Then
+            ' 存在しない場合は作成
+            currentWorkbook.Sheets.Add(After:=currentWorkbook.Sheets(currentWorkbook.Sheets.Count)).Name = destSheet
+        End If
+        
+        ' デスティネーションセルを設定
+        Set destCell = currentWorkbook.Sheets(destSheet).Range(destSheetCell)
+        
+        ' 値と数値の書式をコピー＆ペースト
+        sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
+        destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+        
+        ' ソースワークブックを閉じる
+        sourceWorkbook.Close SaveChanges:=False
+        
+        ' ステータスを更新
+        importSheet.Cells(i, "H").Value = "完了"
+        elapsedTime = Format(Timer - startTime, "0.00") & " 秒"
+        
+        ' ログに記録
+        With logSheet
+            .Cells(.Rows.Count, "A").End(xlUp).Offset(1, 0).Value = Now
+            .Cells(.Rows.Count, "B").End(xlUp).Value = sourceFile
+            .Cells(.Rows.Count, "C").End(xlUp).Value = "成功"
+            .Cells(.Rows.Count, "D").End(xlUp).Value = destSheet & "!" & destSheetCell & " に " & elapsedTime & " で取り込み完了"
+        End With
+        
+        ' エラーハンドリング解除
+        On Error GoTo 0
+        DoEvents
+        Continue For
+
+ErrorHandler:
+        ' エラー処理
+        importSheet.Cells(i, "H").Value = "エラー"
+        elapsedTime = Format(Timer - startTime, "0.00") & " 秒"
+        
+        ' エラー情報をログに記録
+        With logSheet
+            .Cells(.Rows.Count, "A").End(xlUp).Offset(1, 0).Value = Now
+            .Cells(.Rows.Count, "B").End(xlUp).Value = sourceFile
+            .Cells(.Rows.Count, "C").End(xlUp).Value = "エラー"
+            .Cells(.Rows.Count, "D").End(xlUp).Value = Err.Description & "（" & elapsedTime & "）"
+        End With
+        
+        ' ソースワークブックを閉じる（開いている場合）
+        If Not sourceWorkbook Is Nothing Then
+            sourceWorkbook.Close SaveChanges:=False
+        End If
+        
+        ' エラークリアして次の行へ
+        Err.Clear
+        On Error GoTo 0
+        DoEvents
+    Next i
+    
+    ' ステータスバーをリセット
+    Application.StatusBar = False
+    MsgBox "取り込み処理が完了しました。", vbInformation
+
+End Sub
+
+Function SheetExists(sheetName As String, wb As Workbook) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Sheets(sheetName)
+    On Error GoTo 0
+    SheetExists = Not ws Is Nothing
+End Function
+
+
+
+
 Sub Get_Med_LI_Prem()
     Dim sourcePath As String
     Dim sourceFile As String
@@ -50,3 +193,6 @@ Sub Get_Med_LI_Prem()
     Call currentWorkbook.Sheets("Import").Activate
 
 End Sub
+
+
+
