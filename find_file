@@ -1,0 +1,23 @@
+Sub GetSingleFileContainingWorksheet()
+    Dim folderPath As String
+    Dim fileName As String
+    Dim wildcardPattern As String
+    
+    ' フォルダのパスを指定 (例: C:\Documents\202406\)
+    folderPath = "C:\Documents\202406\"
+    
+    ' ワイルドカードパターンを指定 (例: "*worksheet*" でファイル名に"worksheet"が含まれるものを取得)
+    wildcardPattern = "*worksheet*"
+    
+    ' 最初のファイルを取得
+    fileName = Dir(folderPath & wildcardPattern)
+    
+    ' ファイル名が見つかった場合
+    If fileName <> "" Then
+        ' シートにファイル名を表示 (例: A1セル)
+        Range("A1").Value = fileName
+    Else
+        ' ファイルが見つからなかった場合のメッセージ
+        MsgBox "該当するファイルが見つかりませんでした。"
+    End If
+End Sub
