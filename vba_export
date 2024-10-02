@@ -1,0 +1,51 @@
+Sub ExportSheetToCSV()
+    Dim mgmtSheet As Worksheet
+    Dim targetRow As Long
+    Dim sheetToExport As Worksheet
+    Dim csvFilePath As String
+    Dim csvFileName As String
+    Dim sheetName As String
+    Dim fullCsvPath As String
+
+    ' 管理シートを設定（この例では "管理シート" という名前）
+    Set mgmtSheet = ThisWorkbook.Sheets("管理シート")
+
+    ' 現在の選択セルの行を取得
+    targetRow = Application.ActiveCell.Row
+
+    ' A列からC列のデータを取得
+    csvFilePath = mgmtSheet.Cells(targetRow, "A").Value ' CSVファイルのパス
+    csvFileName = mgmtSheet.Cells(targetRow, "B").Value ' CSVファイル名
+    sheetName = mgmtSheet.Cells(targetRow, "C").Value   ' エクスポートするシート名
+
+    ' エクスポートするシートが存在するか確認
+    On Error Resume Next
+    Set sheetToExport = ThisWorkbook.Sheets(sheetName)
+    On Error GoTo 0
+
+    If sheetToExport Is Nothing Then
+        MsgBox "シート " & sheetName & " が見つかりません。", vbExclamation
+        Exit Sub
+    End If
+
+    ' フルパスの作成
+    If Right(csvFilePath, 1) <> "\" Then
+        csvFilePath = csvFilePath & "\"
+    End If
+    fullCsvPath = csvFilePath & csvFileName
+
+    ' フォルダが存在するか確認、なければ作成
+    If Dir(csvFilePath, vbDirectory) = "" Then
+        MkDir csvFilePath
+    End If
+
+    ' 一時的なブックを作成してシートをコピー
+    sheetToExport.Copy
+    With ActiveWorkbook
+        ' CSV形式で保存（UTF-8で保存する場合は、FileFormatをxlCSVUTF8に変更）
+        .SaveAs Filename:=fullCsvPath, FileFormat:=xlCSV, CreateBackup:=False
+        .Close SaveChanges:=False
+    End With
+
+    MsgBox "シート " & sheetName & " を " & fullCsvPath & " にエクスポートしました。", vbInformation
+End Sub
