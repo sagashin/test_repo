@@ -1,0 +1,45 @@
+Option Explicit
+
+' モジュールレベル変数で元データの情報を保存
+Public SourcePath As String
+Public SourceFileName As String
+Public SourceSheetName As String
+Public SourceRangeAddress As String
+
+Sub MyCopy()
+    ' 元データの情報を保存
+    With ActiveWorkbook
+        SourcePath = .Path
+        SourceFileName = .Name
+    End With
+    SourceSheetName = ActiveSheet.Name
+    SourceRangeAddress = Selection.Address
+
+    ' 選択範囲をコピー
+    Selection.Copy
+End Sub
+
+Sub MyPaste()
+    ' データを貼り付け
+    ActiveSheet.Paste
+
+    ' 貼り付け先の範囲を取得
+    Dim DestRange As Range
+    Set DestRange = Selection
+
+    ' コメントのテキストを作成
+    Dim CommentText As String
+    CommentText = "元データ情報:" & vbCrLf & _
+                  "パス: " & SourcePath & vbCrLf & _
+                  "ファイル名: " & SourceFileName & vbCrLf & _
+                  "シート名: " & SourceSheetName & vbCrLf & _
+                  "セル範囲: " & SourceRangeAddress
+
+    ' 貼り付け先のセルにコメントを追加
+    On Error Resume Next
+    With DestRange
+        .ClearComments
+        .AddComment Text:=CommentText
+    End With
+    On Error GoTo 0
+End Sub
