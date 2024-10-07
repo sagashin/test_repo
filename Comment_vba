@@ -1,0 +1,34 @@
+Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
+    On Error Resume Next
+    
+    ' クリップボードの内容を取得
+    Dim clipboardData As DataObject
+    Set clipboardData = New DataObject
+    clipboardData.GetFromClipboard
+    Dim clipboardText As String
+    clipboardText = clipboardData.GetText
+
+    ' クリップボードの内容がセルの範囲のアドレスでない場合は終了
+    If Not clipboardText Like "*!*R*C*" Then Exit Sub
+
+    ' 元データの情報を取得
+    Dim srcRange As Range
+    Set srcRange = Range(clipboardText)
+
+    ' パス、ファイル名、シート名、セル範囲の情報を取得
+    Dim srcWorkbookPath As String
+    srcWorkbookPath = srcRange.Worksheet.Parent.FullName
+    Dim srcSheetName As String
+    srcSheetName = srcRange.Worksheet.Name
+    Dim srcAddress As String
+    srcAddress = srcRange.Address
+
+    ' コメントを設定
+    Dim cell As Range
+    For Each cell In Target
+        cell.ClearComments
+        cell.AddComment "Source: " & srcWorkbookPath & " | Sheet: " & srcSheetName & " | Range: " & srcAddress
+    Next cell
+
+    On Error GoTo 0
+End Sub
