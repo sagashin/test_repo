@@ -20,12 +20,12 @@ Sub MyCopy()
 End Sub
 
 Sub MyPaste()
-    ' データを貼り付け
-    ActiveSheet.Paste
-
     ' 貼り付け先の範囲を取得
     Dim DestRange As Range
     Set DestRange = Selection
+
+    ' データを貼り付け
+    DestRange.PasteSpecial Paste:=xlPasteAll
 
     ' コメントのテキストを作成
     Dim CommentText As String
@@ -42,4 +42,7 @@ Sub MyPaste()
         .AddComment Text:=CommentText
     End With
     On Error GoTo 0
+
+    ' クリップボードをクリア
+    Application.CutCopyMode = False
 End Sub
