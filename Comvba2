@@ -1,60 +1,41 @@
-Option Explicit
-' モジュールレベル変数で元データの情報を保存
-Public SourcePath As String
-Public SourceFileName As String
-Public SourceSheetName As String
-Public SourceRangeAddress As String
-Public CopiedData As Object ' DataObjectを格納する変数
-
-Sub MyCopy()
-    ' DataObjectを初期化
-    Set CopiedData = CreateObject("Forms.DataObject")
+Sub CopyWithMetadata()
+    Dim sourceRange As Range
+    Dim sourceSheet As Worksheet
+    Dim sourcePath As String
+    Dim sourceFileName As String
+    Dim sourceSheetName As String
+    Dim sourceAddress As String
     
-    ' 元データの情報を保存
-    With ActiveWorkbook
-        SourcePath = .FullName  ' フルパスを取得
-        SourceFileName = .Name
-    End With
-    SourceSheetName = ActiveSheet.Name
-    SourceRangeAddress = Selection.Address(External:=True)  ' 外部参照形式でアドレスを取得
-
-    ' 選択範囲をコピーしてDataObjectに保存
-    Selection.Copy
-    CopiedData.GetFromClipboard
+    ' コピー元の範囲を設定
+    Set sourceRange = Selection
+    
+    ' コピー元の情報を取得
+    Set sourceSheet = sourceRange.Worksheet
+    sourcePath = ThisWorkbook.Path
+    sourceFileName = ThisWorkbook.Name
+    sourceSheetName = sourceSheet.Name
+    sourceAddress = sourceRange.Address
+    
+    ' 値をコピー
+    sourceRange.Copy
+    
+    ' コメントを追加
+    sourceRange.AddComment "Source Path: " & sourcePath & vbCrLf & _
+                           "File Name: " & sourceFileName & vbCrLf & _
+                           "Sheet Name: " & sourceSheetName & vbCrLf & _
+                           "Range: " & sourceAddress
 End Sub
 
-Sub MyPaste()
-    ' コピー元の情報があるか確認
-    If CopiedData Is Nothing Then
-        MsgBox "コピー元の情報がありません。MyCopyを先に実行してください。", vbExclamation
-        Exit Sub
-    End If
 
-    ' 貼り付け先のセルを取得
-    Dim DestRange As Range
-    Set DestRange = Selection
-
-    ' クリップボードのデータを再度クリップボードに設定して貼り付け
-    CopiedData.PutInClipboard
-    DestRange.Select
-    ActiveSheet.Paste
-
-    ' コメントのテキストを作成
-    Dim CommentText As String
-    CommentText = "元データ情報:" & vbCrLf & _
-                  "パス: " & SourcePath & vbCrLf & _
-                  "ファイル名: " & SourceFileName & vbCrLf & _
-                  "シート名: " & SourceSheetName & vbCrLf & _
-                  "セル範囲: " & SourceRangeAddress
-
-    ' 貼り付け先のセルにコメントを追加
-    On Error Resume Next
-    With DestRange
-        .ClearComments
-        .AddComment Text:=CommentText
-    End With
-    On Error GoTo 0
-
+Sub PasteWithMetadata()
+    Dim destRange As Range
+    
+    ' コピー先の範囲を設定
+    Set destRange = Selection
+    
+    ' 値をペースト
+    destRange.PasteSpecial Paste:=xlPasteValues
+    
     ' クリップボードをクリア
     Application.CutCopyMode = False
 End Sub
