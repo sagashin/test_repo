@@ -1,0 +1,27 @@
+Sub CopyColumnsToSpecificRange()
+    Dim wsSource As Worksheet
+    Dim wsDestination As Worksheet
+    Dim lastRowSource As Long
+    Dim destRow As Long
+
+    ' シートの設定
+    Set wsSource = ThisWorkbook.Sheets("Sheet1")
+    Set wsDestination = ThisWorkbook.Sheets("Sheet2")
+
+    ' シート2の4行目以降をクリア
+    wsDestination.Rows("4:" & wsDestination.Rows.Count).Clear
+
+    ' シート1のテーブルの最後の行を取得（カラムEを基準にします）
+    lastRowSource = wsSource.Cells(wsSource.Rows.Count, 5).End(xlUp).Row
+
+    ' コピー先の開始行を設定
+    destRow = 4
+
+    ' シート1のカラムE, F, H, Q, R, Sを4行目から最後の行までコピーして、シート2のカラムC:Hに貼り付け
+    wsSource.Range("E4:E" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 3) ' カラムC
+    wsSource.Range("F4:F" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 4) ' カラムD
+    wsSource.Range("H4:H" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 5) ' カラムE
+    wsSource.Range("Q4:Q" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 6) ' カラムF
+    wsSource.Range("R4:R" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 7) ' カラムG
+    wsSource.Range("S4:S" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 8) ' カラムH
+End Sub
