@@ -1,0 +1,39 @@
+Sub GroupByColumnCAndSumColumnF()
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim summaryDict As Object
+    Dim cell As Range
+    Dim groupKey As Variant
+    Dim outputRow As Long
+
+    ' シートの設定
+    Set ws = ThisWorkbook.Sheets("Sheet2")
+
+    ' カラムCの最後の行を取得
+    lastRow = ws.Cells(ws.Rows.Count, 3).End(xlUp).Row
+
+    ' Dictionaryオブジェクトを使用してグループと合計を管理
+    Set summaryDict = CreateObject("Scripting.Dictionary")
+
+    ' カラムCでグループ化し、カラムFの合計を計算
+    For Each cell In ws.Range("C4:C" & lastRow)
+        groupKey = cell.Value
+        If groupKey <> "" Then
+            If Not summaryDict.exists(groupKey) Then
+                summaryDict.Add groupKey, ws.Cells(cell.Row, 6).Value ' カラムFの初期値を追加
+            Else
+                summaryDict(groupKey) = summaryDict(groupKey) + ws.Cells(cell.Row, 6).Value ' カラムFの値を累積
+            End If
+        End If
+    Next cell
+
+    ' 結果をシート2のカラムJとKに出力
+    outputRow = 4 ' 出力を開始する行
+    ws.Cells(3, 10).Value = "グループ" ' カラムJのヘッダー
+    ws.Cells(3, 11).Value = "F列の合計" ' カラムKのヘッダー
+    For Each groupKey In summaryDict.keys
+        ws.Cells(outputRow, 10).Value = groupKey ' グループ名を出力（カラムJ）
+        ws.Cells(outputRow, 11).Value = summaryDict(groupKey) ' カラムFの合計を出力（カラムK）
+        outputRow = outputRow + 1
+    Next groupKey
+End Sub
