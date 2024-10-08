@@ -1,27 +1,45 @@
-Sub CopyColumnsToSpecificRange()
-    Dim wsSource As Worksheet
+Sub CopyTablesFromSheet1AndSheet3()
+    Dim wsSource1 As Worksheet
+    Dim wsSource3 As Worksheet
     Dim wsDestination As Worksheet
-    Dim lastRowSource As Long
-    Dim destRow As Long
+    Dim lastRowSource1 As Long
+    Dim lastRowSource3 As Long
+    Dim lastRowDest As Long
+    Dim startRow As Long
 
     ' シートの設定
-    Set wsSource = ThisWorkbook.Sheets("Sheet1")
+    Set wsSource1 = ThisWorkbook.Sheets("Sheet1")
+    Set wsSource3 = ThisWorkbook.Sheets("Sheet3")
     Set wsDestination = ThisWorkbook.Sheets("Sheet2")
 
     ' シート2の4行目以降をクリア
     wsDestination.Rows("4:" & wsDestination.Rows.Count).Clear
 
+    ' コピー開始行の設定
+    startRow = 4
+
     ' シート1のテーブルの最後の行を取得（カラムEを基準にします）
-    lastRowSource = wsSource.Cells(wsSource.Rows.Count, 5).End(xlUp).Row
+    lastRowSource1 = wsSource1.Cells(wsSource1.Rows.Count, 5).End(xlUp).Row
 
-    ' コピー先の開始行を設定
-    destRow = 4
+    ' シート1のカラムE, F, H, Q, R, Sを4行目から最後の行までコピーして、シート2のカラムC:Hに値貼り付け
+    wsDestination.Range("C" & startRow & ":C" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("E4:E" & lastRowSource1).Value
+    wsDestination.Range("D" & startRow & ":D" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("F4:F" & lastRowSource1).Value
+    wsDestination.Range("E" & startRow & ":E" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("H4:H" & lastRowSource1).Value
+    wsDestination.Range("F" & startRow & ":F" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("Q4:Q" & lastRowSource1).Value
+    wsDestination.Range("G" & startRow & ":G" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("R4:R" & lastRowSource1).Value
+    wsDestination.Range("H" & startRow & ":H" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("S4:S" & lastRowSource1).Value
 
-    ' シート1のカラムE, F, H, Q, R, Sを4行目から最後の行までコピーして、シート2のカラムC:Hに貼り付け
-    wsSource.Range("E4:E" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 3) ' カラムC
-    wsSource.Range("F4:F" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 4) ' カラムD
-    wsSource.Range("H4:H" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 5) ' カラムE
-    wsSource.Range("Q4:Q" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 6) ' カラムF
-    wsSource.Range("R4:R" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 7) ' カラムG
-    wsSource.Range("S4:S" & lastRowSource).Copy Destination:=wsDestination.Cells(destRow, 8) ' カラムH
+    ' シート2の最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' シート3のテーブルの最後の行を取得（カラムFを基準にします）
+    lastRowSource3 = wsSource3.Cells(wsSource3.Rows.Count, 6).End(xlUp).Row
+
+    ' シート3のカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、シート2のカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("F4:F" & lastRowSource3).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("G4:G" & lastRowSource3).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("H4:H" & lastRowSource3).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("I4:I" & lastRowSource3).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("J4:J" & lastRowSource3).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("K4:K" & lastRowSource3).Value
 End Sub
