@@ -1,0 +1,32 @@
+Sub CreateUniqueListFromColumnD()
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim uniqueList As Collection
+    Dim cell As Range
+    Dim outputRow As Long
+
+    ' シートの設定
+    Set ws = ThisWorkbook.Sheets("Sheet2")
+
+    ' カラムDの最後の行を取得
+    lastRow = ws.Cells(ws.Rows.Count, 4).End(xlUp).Row
+
+    ' ユニークな値を格納するコレクションを初期化
+    Set uniqueList = New Collection
+
+    ' カラムDのデータをループしてユニークな値をコレクションに追加
+    On Error Resume Next ' 重複した値を追加しようとした際のエラーを無視する
+    For Each cell In ws.Range("D4:D" & lastRow)
+        If cell.Value <> "" Then
+            uniqueList.Add cell.Value, CStr(cell.Value) ' 値をキーとして追加
+        End If
+    Next cell
+    On Error GoTo 0 ' エラー無視モードを解除
+
+    ' ユニークなリストをシート2のカラムJに出力
+    outputRow = 4 ' 出力を開始する行
+    For Each Item In uniqueList
+        ws.Cells(outputRow, 10).Value = Item ' カラムJに出力
+        outputRow = outputRow + 1
+    Next Item
+End Sub
