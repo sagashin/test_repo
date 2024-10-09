@@ -1,0 +1,122 @@
+Sub Create_Aggregation()
+    Dim wsSource1 As Worksheet
+    Dim wsSource3 As Worksheet
+    Dim wsDestination As Worksheet
+    Dim lastRowSource1 As Long
+    Dim lastRowSource3 As Long
+    Dim lastRowDest As Long
+    Dim startRow As Long
+
+    ' シートの設定
+    Set wsSource1 = ThisWorkbook.Sheets("Investment")
+    Set wsSource2 = ThisWorkbook.Sheets("Other_Asset")
+    Set wsSource3 = ThisWorkbook.Sheets("Reinsurance")
+    Set wsSource4 = ThisWorkbook.Sheets("Delivative")
+    Set wsSource5 = ThisWorkbook.Sheets("連結調整")
+    Set wsSource6 = ThisWorkbook.Sheets("AIG_Harmony")
+    
+    Set wsDestination = ThisWorkbook.Sheets("Aggregation Data")
+
+    ' Aggregationの4行目以降をクリア
+    wsDestination.Range("A4:H" & wsDestination.Rows.Count).Clear
+
+    ' コピー開始行の設定
+    startRow = 4
+
+    ' Investmentのテーブルの最後の行を取得
+    lastRowSource1 = wsSource1.Cells(wsSource1.Rows.Count, 5).End(xlUp).Row
+
+    ' InvestmentのカラムE, F, H, Q, R, Sを4行目から最後の行までコピーして、AggregationのカラムC:Hに値貼り付け
+    wsDestination.Range("B" & startRow & ":B" & startRow + lastRowSource1 - 4).Value = "Investment"
+    wsDestination.Range("C" & startRow & ":C" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("E4:E" & lastRowSource1).Value
+    wsDestination.Range("D" & startRow & ":D" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("F4:F" & lastRowSource1).Value
+    wsDestination.Range("E" & startRow & ":E" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("H4:H" & lastRowSource1).Value
+    wsDestination.Range("F" & startRow & ":F" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("Q4:Q" & lastRowSource1).Value
+    wsDestination.Range("G" & startRow & ":G" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("R4:R" & lastRowSource1).Value
+    wsDestination.Range("H" & startRow & ":H" & startRow + lastRowSource1 - 4).Value = wsSource1.Range("S4:S" & lastRowSource1).Value
+
+    ' Aggregationの最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' Reinsuranceのテーブルの最後の行を取得
+    lastRowSource3 = wsSource3.Cells(wsSource3.Rows.Count, 6).End(xlUp).Row
+
+    ' Reinsuranceのテーブルの最後の行を取得のカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、AggregationのカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("A" & lastRowDest + 1 & ":A" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("D4:D" & lastRowSource3).Value
+    wsDestination.Range("B" & lastRowDest + 1 & ":B" & lastRowDest + lastRowSource3 - 3).Value = "Reinsurance"
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("F4:F" & lastRowSource3).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("G4:G" & lastRowSource3).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("H4:H" & lastRowSource3).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("I4:I" & lastRowSource3).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("J4:J" & lastRowSource3).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource3 - 3).Value = wsSource3.Range("K4:K" & lastRowSource3).Value
+    
+    
+    ' Aggregationの最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' Other Assetのテーブルの最後の行を取得
+    lastRowSource2 = wsSource2.Cells(wsSource2.Rows.Count, 6).End(xlUp).Row
+
+    ' Other AssetのカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、AggregationのカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("A" & lastRowDest + 1 & ":A" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("A4:A" & lastRowSource2).Value
+    wsDestination.Range("B" & lastRowDest + 1 & ":B" & lastRowDest + lastRowSource2 - 3).Value = "Other Asset"
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("C4:C" & lastRowSource2).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("D4:D" & lastRowSource2).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("E4:E" & lastRowSource2).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("F4:F" & lastRowSource2).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("G4:G" & lastRowSource2).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource2 - 3).Value = wsSource2.Range("H4:H" & lastRowSource2).Value
+    
+    ' Aggregationの最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' Delivativeのテーブルの最後の行を取得
+    lastRowSource4 = wsSource4.Cells(wsSource4.Rows.Count, 6).End(xlUp).Row
+
+    ' DelivativeのカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、AggregationのカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("A" & lastRowDest + 1 & ":A" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("A4:A" & lastRowSource4).Value
+    wsDestination.Range("B" & lastRowDest + 1 & ":B" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("B4:B" & lastRowSource4).Value
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("C4:C" & lastRowSource4).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("D4:D" & lastRowSource4).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("E4:E" & lastRowSource4).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("F4:F" & lastRowSource4).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("G4:G" & lastRowSource4).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource4 - 3).Value = wsSource4.Range("H4:H" & lastRowSource4).Value
+    
+    ' Aggregationの最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' Delivativeのテーブルの最後の行を取得
+    lastRowSource5 = wsSource5.Cells(wsSource5.Rows.Count, 6).End(xlUp).Row
+
+    ' DelivativeのカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、AggregationのカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("A" & lastRowDest + 1 & ":A" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("A4:A" & lastRowSource5).Value
+    wsDestination.Range("B" & lastRowDest + 1 & ":B" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("B4:B" & lastRowSource5).Value
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("C4:C" & lastRowSource5).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("D4:D" & lastRowSource5).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("E4:E" & lastRowSource5).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("F4:F" & lastRowSource5).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("G4:G" & lastRowSource5).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource5 - 3).Value = wsSource5.Range("H4:H" & lastRowSource5).Value
+    
+    ' Aggregationの最後の行を取得
+    lastRowDest = wsDestination.Cells(wsDestination.Rows.Count, 3).End(xlUp).Row
+
+    ' AIG Harmonyのテーブルの最後の行を取得
+    lastRowSource6 = wsSource6.Cells(wsSource6.Rows.Count, 6).End(xlUp).Row
+
+    ' DelivativeのカラムF, G, H, I, J, Kを4行目から最後の行までコピーして、AggregationのカラムC:Hの次の行から値貼り付け
+    wsDestination.Range("A" & lastRowDest + 1 & ":A" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("A4:A" & lastRowSource6).Value
+    wsDestination.Range("B" & lastRowDest + 1 & ":B" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("B4:B" & lastRowSource6).Value
+    wsDestination.Range("C" & lastRowDest + 1 & ":C" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("C4:C" & lastRowSource6).Value
+    wsDestination.Range("D" & lastRowDest + 1 & ":D" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("D4:D" & lastRowSource6).Value
+    wsDestination.Range("E" & lastRowDest + 1 & ":E" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("E4:E" & lastRowSource6).Value
+    wsDestination.Range("F" & lastRowDest + 1 & ":F" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("F4:F" & lastRowSource6).Value
+    wsDestination.Range("G" & lastRowDest + 1 & ":G" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("G4:G" & lastRowSource6).Value
+    wsDestination.Range("H" & lastRowDest + 1 & ":H" & lastRowDest + lastRowSource6 - 3).Value = wsSource6.Range("H4:H" & lastRowSource6).Value
+    
+    
+    
+  
+End Sub
