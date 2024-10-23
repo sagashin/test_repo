@@ -1,0 +1,18 @@
+library(tidyverse)
+library(tidyr)
+
+setwd("//pnjkncifs01/202_Common2/ECM/JapanModel/2024/Jun2024/Actual/10_Data")
+
+df <- read.csv("June_Actual_Igloo_output_241023.csv", sep = "\t")
+
+
+df2 <- df %>% 
+  filter(RunID > 10300)
+
+total_uw_risk <- df2 %>% 
+  filter(ClassLevel == 5 & RiskLevel == 4 & Risk == "Insurance Risk" & Allocation == "Standalone VaR") %>% 
+  select(RunID, Entity, Value)
+
+wide_test <- pivot_wider(total_uw_risk,
+            names_from = RunID,
+            values_from = Value)
