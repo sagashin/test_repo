@@ -1,0 +1,12 @@
+df_tcr <- data.frame()
+
+for (i in unique(df_agg$RunID)) {
+  for (j in unique(df_agg$Entity)) {
+      
+      skip_to_next <- FALSE
+      tryCatch(tcr <- calc_tcr(i, j), error = function(e) {skip_to_next <- TRUE})
+      if(skip_to_next) {next}
+      df_tcr <- rbind(df_tcr,tcr)
+  }
+  
+}
