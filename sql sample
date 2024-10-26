@@ -1,3 +1,133 @@
+library(tidyverse)
+library(DBI)
+library(odbc)
+library(writexl)
+
+setwd("//pnjkncifs01/202_Common2/ECM/JapanModel/2024/Jun2024/Actual/10_Data")
+
+# データベース接続
+con <- dbConnect(odbc(),
+                 Driver = "SQL Server",
+                 Server = "DWAWDB245401,60101",
+                 Database = "ICMDEV_5_3_JAPAN",
+                 Trusted_Connection = "Yes")
+
+# クエリ関数
+execute_query <- function(con, query) {
+  dbGetQuery(con, query)
+}
+
+# SQLクエリの実行
+qry_capital <- "SELECT [RunID],[Group],[Allocation],[Entity],[RiskLevel],[Risk],[Value] 
+                FROM [ICM].[Outputs_Capital_GroupAllocationByEntityRisk] 
+                WHERE Allocation IN ('Standalone VaR','Standalone TVaR','One-Year Co-TVaR')"
+df <- execute_query(con, qry_capital)
+
+qry_opr_oth <- "SELECT * FROM [ICM].[Global_UserDefinedDistns_Names$DIM] a 
+                INNER JOIN [ICM].[Global_UserDefinedDistns_Parameters$DATA] b 
+                ON a.ID = b.Global_UserDefinedDistns_Names$ID"
+df_opr_oth <- execute_query(con, qry_opr_oth)
+
+qry_data_group_versions <- "SELECT [Version], [RunID], [DataGroupID] 
+                            FROM [ICMDEV_5_3_JAPAN].[WTW].[DATAGROUP_VERSIONS]"
+df_data_group_versions <- execute_query(con, qry_data_group_versions)
+
+qry_cat <- "SELECT * FROM [ICM].[Outputs_Cat] WHERE OriginPeriodBasis = 'Accident'"
+df_cat <- execute_query(con, qry_cat)
+
+# データベース接続をクローズ
+dbDisconnect(con)
+
+# ローカルファイルから相関行列を読み込み
+df_corr_matrix <- read.csv("Correlation_Matrix.csv")
+
+# データ処理
+df_cat <- df_cat %>%
+  mutate(RunID = as.numeric(RunID)) %>%
+  filter(RunID > 10300, 
+         Class == "Total Insurance", 
+         OriginPeriodBasis == "Accident", 
+         Stat == "P99.5") %>%
+  mutate(Group = "AJH", Allocation = "Standalone VaR") %>%
+  rename(RiskLevel = Peril, Risk = Category) %>%
+  select(RunID, Group, Allocation, Entity, RiskLevel, Risk, Value) %>%
+  mutate(Value = as.numeric(Value))
+
+df_data_group_versions <- df_data_group_versions %>%
+  filter(DataGroupID == 3)
+
+df_opr_oth <- df_opr_oth %>%
+  rename(Version2 = V5, Value2 = V9)
+
+df_merge <- df_opr_oth %>%
+  inner_join(df_data_group_versions, by = "Version") %>%
+  mutate(paramID = str_sub(`Const_Ins_UDParams$ID`, start = -1, end = -1)) %>%
+  filter(RunID > 10300, paramID == 1, Version == Version2, Position != 10) %>%
+  select(RunID, ID, Position, Value, Value2) %>%
+  arrange(RunID, Position) %>%
+  mutate(Entity = str_sub(Value, start = -3, end = -1),
+         Group = "AJH",
+         Allocation = "Standalone VaR",
+         RiskLevel = "5") %>%
+  rename(Risk = Value, Value = Value2) %>%
+  filter(!Entity %in% c("isk", "sks")) %>%
+  mutate(Entity = case_when(
+    Entity == "npo" ~ "Sonpo",
+    Entity == "AJH" ~ "Total",
+    TRUE ~ Entity
+  ))
+
+df2 <- df %>%
+  filter(
+    RunID > 10300, Allocation == "Standalone VaR",
+    (Risk == "Insurance Risk" & RiskLevel == 4) |
+    Risk == "Premium Risk Non-Cat" |
+    (Risk == "Reserve Risk" & RiskLevel == 3) |
+    (Risk == "Catastrophe Risk" & RiskLevel == 2) |
+    (Risk == "Credit Risk - RI Default" & RiskLevel == 3) |
+    (Risk == "Market Risk" & RiskLevel == 4) |
+    (Risk == "Interest Rate" & RiskLevel == 1) |
+    (Risk == "Equity" & RiskLevel == 1) |
+    (Risk == "Spread" & RiskLevel == 1) |
+    (Risk == "Credit" & RiskLevel == 1) |
+    (Risk == "Non-Insurance Currency Risk" & RiskLevel == 1) |
+    (Risk == "Liquidity Risk" & RiskLevel == 1) |
+    (Risk == "Tax" & RiskLevel == 1) |
+    (Risk == "Total" & RiskLevel == 5)
+  )
+
+df3 <- bind_rows(df2, df_merge)
+
+# 総資本要件の計算
+calculate_tcr <- function(runid, entity) {
+  df_runid <- df3 %>%
+    filter(RunID == runid, Entity == entity)
+  
+  TCR <- sqrt(t(df_runid$Value) %*% as.matrix(df_corr_matrix[,-1]) %*% df_runid$Value)
+  
+  data.frame(
+    RunID = runid,
+    Group = "AJH",
+    Allocation = "Standalone VaR",
+    Entity = entity,
+    RiskLevel = "6",
+    Risk = "Total Capital Requirement",
+    Value = TCR
+  )
+}
+
+df_tcr <- map_dfr(unique(df3$RunID), ~{
+  map_dfr(unique(df3$Entity), ~tryCatch({
+    calculate_tcr(.x, .y)
+  }, error = function(e) NULL))
+})
+
+df_with_tcr_cat <- bind_rows(df3, df_tcr, df_cat)
+
+# ワイド形式への変換と保存
+wide_test <- pivot_wider(df_with_tcr_cat, names_from = RunID, values_from = Value)
+write_xlsx(wide_test, "Outputs_Capital_GroupAllocationByEntityRisk_241025_v3.xlsx")
+
 # 必要なライブラリのみを読み込み
 library(tidyverse)
 library(DBI)
