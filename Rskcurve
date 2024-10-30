@@ -1,0 +1,71 @@
+# 必要なパッケージのインストールと読み込み
+install.packages(c("fitdistrplus", "ggplot2"))
+library(fitdistrplus)
+library(ggplot2)
+
+# 1. ロスデータの読み込みと準備
+# ここでは例として、仮のロスデータを生成します。実際のデータを使用する場合は、適切なデータ読み込み方法に置き換えてください。
+set.seed(123)
+loss_data <- c(1.2e6, 2.5e6, 3.0e6, 1.8e6, 2.2e6, 2.8e6, 3.5e6, 2.0e6, 2.7e6, 3.2e6)
+
+# 2. 適切な分布のフィッティング
+# 対数正規分布をロスデータにフィットします
+fit_lnorm <- fitdist(loss_data, "lnorm")
+
+# フィット結果の確認
+summary(fit_lnorm)
+plot(fit_lnorm)
+
+# 3. 分布パラメータの調整
+# 市場データから得られる50年に一度の損害額を設定
+market_50yr_loss <- 1e7  # 例として1億円とします
+
+# 50年に一度の超過確率を計算
+exceedance_prob_50yr <- 1 / 50
+
+# フィットした分布からの推定値を取得
+estimated_50yr_loss <- qlnorm(1 - exceedance_prob_50yr, meanlog = fit_lnorm$estimate["meanlog"], sdlog = fit_lnorm$estimate["sdlog"])
+
+# 分布パラメータを調整して、市場データの50年損害額に一致させる
+# 目的関数を定義（推定値と市場データの差の二乗和を最小化）
+objective_function <- function(params) {
+  meanlog_adj <- params[1]
+  sdlog_adj <- params[2]
+  estimated_loss <- qlnorm(1 - exceedance_prob_50yr, meanlog = meanlog_adj, sdlog = sdlog_adj)
+  return((estimated_loss - market_50yr_loss)^2)
+}
+
+# 最適化の初期値を設定
+initial_params <- as.list(fit_lnorm$estimate)
+initial_values <- c(initial_params$meanlog, initial_params$sdlog)
+
+# 最適化の実行
+optim_result <- optim(par = initial_values, fn = objective_function)
+
+# 調整済みパラメータの取得
+meanlog_adj <- optim_result$par[1]
+sdlog_adj <- optim_result$par[2]
+
+# 4. リスクカーブの作成
+# 再現期間と対応する超過確率を計算
+return_periods <- seq(1, 100, by = 1)
+exceedance_probs <- 1 / return_periods
+
+# 調整済み分布から損害額を推定
+loss_estimates <- qlnorm(1 - exceedance_probs, meanlog = meanlog_adj, sdlog = sdlog_adj)
+
+# リスクカーブのデータフレームを作成
+risk_curve <- data.frame(
+  ReturnPeriod = return_periods,
+  LossAmount = loss_estimates
+)
+
+# リスクカーブのプロット
+ggplot(risk_curve, aes(x = ReturnPeriod, y = LossAmount)) +
+  geom_line(color = "blue") +
+  geom_point(data = data.frame(ReturnPeriod = 50, LossAmount = market_50yr_loss), aes(x = ReturnPeriod, y = LossAmount), color = "red", size = 3) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "リスクカーブ",
+       x = "再現期間（年）",
+       y = "損害額（円）") +
+  theme_minimal()
