@@ -1,0 +1,81 @@
+Sub Get_Sonpo_OpeRisk()
+    Dim sourcePath As String
+    Dim sourceFile As String
+    Dim sourceSheet As String
+    Dim sourceRange As String
+    Dim destCell As Range
+    Dim sourceWorkbook As Workbook
+    Dim currentWorkbook As Workbook
+    Dim password As String
+    Dim sourceRow As String
+    Dim destSheet As String
+    Dim destSheetCell As String
+    
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+
+    ' 現在のワークブックを設定
+    Set currentWorkbook = ThisWorkbook
+    Set importSheet = currentWorkbook.Sheets("Import")
+    
+    ' マクロの参照行を設定
+    sourceRow = 4
+    
+        ' フォルダのパスを指定 (例: C:\Documents\202406\)
+    sourcePath = importSheet.Range("A" & sourceRow).Value
+    
+    
+    ' ワイルドカードパターンを指定 (例: "*worksheet*" でファイル名に"worksheet"が含まれるものを取得)
+    wildcardPattern = importSheet.Range("Q" & sourceRow).Value
+    
+    ' 最初のファイルを取得
+    Filename = Dir(sourcePath & "\" & wildcardPattern)
+    
+    ' ファイル名が見つかった場合
+    If Filename <> "" Then
+        ' シートにファイル名を表示 (例: A1セル)
+        Range("B" & sourceRow).Value = Filename
+    Else
+        ' ファイルが見つからなかった場合のメッセージ
+        MsgBox "該当するファイルが見つかりませんでした。"
+    End If
+    
+    destSheet = importSheet.Range("E" & sourceRow).Value
+    destSheetCell = importSheet.Range("F" & sourceRow).Value
+
+    ' セルから情報を取得
+    sourcePath = importSheet.Range("A" & sourceRow).Value
+    sourceFile = importSheet.Range("B" & sourceRow).Value
+    sourceSheet = importSheet.Range("C" & sourceRow).Value
+    sourceRange = importSheet.Range("D" & sourceRow).Value
+    Set destCell = currentWorkbook.Sheets(destSheet).Range(destSheetCell)
+       
+    On Error GoTo ErrorHandler
+
+    ' ソースワークブックを開く
+    Set sourceWorkbook = Workbooks.Open(Filename:=sourcePath & "\" & sourceFile, ReadOnly:=True)
+
+    ' コピー＆ペースト（値と書式）
+    sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
+    destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+    
+    ActiveSheet.Range("A1").Copy
+
+    ' ソースワークブックを閉じる（保存せずに）
+    sourceWorkbook.Close SaveChanges:=False
+    
+
+        ' マクロ完了後に管理シートのF1に "Done " & Date と入力
+    importSheet.Range("H" & sourceRow).Value = "Done " & Date
+    
+    Call importSheet.Activate
+
+    Exit Sub
+    
+ErrorHandler:
+
+    importSheet.Range("H" & sourceRow).Value = "Fail"
+
+
+End Sub
