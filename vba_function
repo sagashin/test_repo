@@ -79,3 +79,93 @@ ErrorHandler:
 
 
 End Sub
+
+
+
+Function Get_Sonpo_OpeRisk(sourceRow As Long) As Boolean
+    Dim sourcePath As String
+    Dim sourceFile As String
+    Dim sourceSheet As String
+    Dim sourceRange As String
+    Dim destCell As Range
+    Dim sourceWorkbook As Workbook
+    Dim currentWorkbook As Workbook
+    Dim password As String
+    Dim destSheet As String
+    Dim destSheetCell As String
+    Dim importSheet As Worksheet
+    Dim Filename As String
+    Dim wildcardPattern As String
+    
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+
+    ' 現在のワークブックを設定
+    Set currentWorkbook = ThisWorkbook
+    Set importSheet = currentWorkbook.Sheets("Import")
+    
+    ' フォルダのパスを指定
+    sourcePath = importSheet.Range("A" & sourceRow).Value
+    
+    ' ワイルドカードパターンを指定
+    wildcardPattern = importSheet.Range("Q" & sourceRow).Value
+    
+    ' 最初のファイルを取得
+    Filename = Dir(sourcePath & "\" & wildcardPattern)
+    
+    ' ファイル名が見つかった場合
+    If Filename <> "" Then
+        ' シートにファイル名を表示
+        importSheet.Range("B" & sourceRow).Value = Filename
+    Else
+        ' ファイルが見つからなかった場合のメッセージと関数の終了
+        MsgBox "該当するファイルが見つかりませんでした。"
+        Get_Sonpo_OpeRisk = False
+        Exit Function
+    End If
+    
+    ' 目的のシートとセルを設定
+    destSheet = importSheet.Range("E" & sourceRow).Value
+    destSheetCell = importSheet.Range("F" & sourceRow).Value
+
+    ' セルから情報を取得
+    sourceFile = importSheet.Range("B" & sourceRow).Value
+    sourceSheet = importSheet.Range("C" & sourceRow).Value
+    sourceRange = importSheet.Range("D" & sourceRow).Value
+    Set destCell = currentWorkbook.Sheets(destSheet).Range(destSheetCell)
+       
+    On Error GoTo ErrorHandler
+
+    ' ソースワークブックを開く
+    Set sourceWorkbook = Workbooks.Open(Filename:=sourcePath & "\" & sourceFile, ReadOnly:=True)
+
+    ' コピー＆ペースト（値と書式）
+    sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
+    destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+    
+    ' ソースワークブックを閉じる（保存せずに）
+    sourceWorkbook.Close SaveChanges:=False
+
+    ' 成功した場合に "Done " & 日付を設定
+    importSheet.Range("H" & sourceRow).Value = "Done " & Date
+    Get_Sonpo_OpeRisk = True ' 成功を返す
+    Exit Function
+    
+ErrorHandler:
+    ' エラーが発生した場合に "Fail" を設定
+    importSheet.Range("H" & sourceRow).Value = "Fail"
+    Get_Sonpo_OpeRisk = False ' 失敗を返す
+End Function
+
+
+Sub Execute_Get_Sonpo_OpeRisk()
+    Dim rowNum As Long
+    rowNum = 4 ' 実行したい行番号を指定
+
+    If Get_Sonpo_OpeRisk(rowNum) Then
+        MsgBox "処理が成功しました。"
+    Else
+        MsgBox "処理が失敗しました。"
+    End If
+End Sub
