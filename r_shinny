@@ -67,7 +67,84 @@ server <- function(input, output, session) {
     output_filename <- input$output_filename
 
     # 計算とファイル出力を試行
- 
+    tryCatch({
+      # プログレスバーのリセット
+      updateProgressBar(session, id = "progress", value = 0)
+
+      # データベース接続とクエリ実行を関数化
+      execute_query <- function(con, query) {
+        dbGetQuery(con, query)
+      }
+
+      # データベース接続
+      con <- dbConnect(odbc(),
+                       Driver = "SQL Server",
+                       Server = "DWAWDB245401,60101",
+                       Database = "ICMDEV_5_3_JAPAN",
+                       Trusted_Connection = "Yes")
+
+      # SQLクエリ
+      queries <- list(
+        capital = "SELECT [RunID],[Group],[Allocation],[Entity],[RiskLevel],[Risk],[Value] 
+                   FROM [ICM].[Outputs_Capital_GroupAllocationByEntityRisk] 
+                   WHERE Allocation IN ('Standalone VaR','Standalone TVaR','One-Year Co-TVaR')",
+
+        opr_oth = "SELECT * FROM [ICM].[Global_UserDefinedDistns_Names$DIM] a 
+                   INNER JOIN [ICM].[Global_UserDefinedDistns_Parameters$DATA] b 
+                   ON a.ID = b.Global_UserDefinedDistns_Names$ID",
+
+        data_group_versions = "SELECT [Version], [RunID], [DataGroupID] 
+                               FROM [ICMDEV_5_3_JAPAN].[WTW].[DATAGROUP_VERSIONS]",
+
+        cat = "SELECT * FROM [ICM].[Outputs_Cat] WHERE OriginPeriodBasis = 'Accident'"
+      )
+
+      # クエリ結果の取得
+      df_list <- lapply(queries, execute_query, con = con)
+      dbDisconnect(con)
+
+      # 各データフレームに名前を付ける
+      df_capital <- df_list$capital
+      df_opr_oth <- df_list$opr_oth
+      df_data_group_versions <- df_list$data_group_versions
+      df_cat <- df_list$cat
+      df_corr_matrix <- read.csv("Correlation_Matrix.csv")
+
+      # データ処理
+      df_cat$RunID <- as.numeric(df_cat$RunID)
+      df_cat2 <- df_cat %>% 
+        filter(RunID > 10300 & 
+                 Class == "Total Insurance" & 
+                 OriginPeriodBasis == "Accident" & 
+                 Stat == "P99.5") %>% 
+        mutate(Group = "AJH", Allocation = "Standalone VaR") %>% 
+        rename(RiskLevel = Peril, Risk = Category) %>% 
+        select(RunID, Group, Allocation, Entity, RiskLevel, Risk, Value)
+      df_cat2$Value <- as.numeric(df_cat2$Value)
+
+      updateProgressBar(session, id = "progress", value = 25)
+
+      # 他の処理も追加
+      # ...
+      # 処理の合間で進行状況を更新
+      updateProgressBar(session, id = "progress", value = 50)
+
+      # 最終出力処理
+      write_xlsx(df_cat2, file.path(input$working_dir, output_filename))
+      updateProgressBar(session, id = "progress", value = 100)
+
+      # 成功メッセージ
+      output$message <- renderText({ "計算が完了し、ファイルが保存されました。" })
+
+    }, error = function(e) {
+      # エラーメッセージを表示
+      output$message <- renderText({ paste("エラーが発生しました:", e$message) })
+      updateProgressBar(session, id = "progress", value = 0)
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
 
 
 
