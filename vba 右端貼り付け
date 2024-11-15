@@ -1,0 +1,33 @@
+Sub AppendColumnToDataRange()
+    Dim wbA As Workbook
+    Dim wbB As Workbook
+    Dim wsA As Worksheet
+    Dim wsB As Worksheet
+    Dim lastRowA As Long
+    Dim lastColB As Long
+    Dim rngSource As Range
+    Dim rngDest As Range
+    Dim lastRowB As Long
+    
+    ' ワークブックAとBをそれぞれ設定
+    Set wbA = Workbooks("WorkbookA.xlsx") ' ワークブックAの名前を指定してください
+    Set wbB = Workbooks("WorkbookB.xlsx") ' ワークブックBの名前を指定してください
+    
+    ' ワークブックAのシート1とワークブックBのシート2を設定
+    Set wsA = wbA.Sheets("Sheet1")
+    Set wsB = wbB.Sheets("Sheet2")
+    
+    ' ワークブックAのシート1のC列の最終行を取得
+    lastRowA = wsA.Cells(wsA.Rows.Count, "C").End(xlUp).Row
+    Set rngSource = wsA.Range("C2:C" & lastRowA) ' データがC2から開始されていると仮定
+    
+    ' ワークブックBのシート2で、データ範囲の最右端の列を取得
+    lastColB = wsB.Cells(1, wsB.Columns.Count).End(xlToLeft).Column + 1
+    lastRowB = wsB.Cells(wsB.Rows.Count, lastColB - 1).End(xlUp).Row
+    
+    ' コピー先の範囲を設定
+    Set rngDest = wsB.Cells(2, lastColB).Resize(rngSource.Rows.Count, 1)
+    
+    ' データをコピー
+    rngDest.Value = rngSource.Value
+End Sub
