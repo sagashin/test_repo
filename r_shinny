@@ -1,5 +1,5 @@
 library(shiny)
-library(shinyWidgets) # プログレスバー用
+library(shinyWidgets)
 library(readxl)
 library(tidyverse)
 library(tidyr)
@@ -31,34 +31,26 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  # SQLサーバーとデータベースを表示
   output$sql_info <- renderText({
     paste("サーバー: DWAWDB245401,60101\nデータベース: ICMDEV_5_3_JAPAN")
   })
 
-  # 相関行列ファイルを表示
   output$corr_matrix_file <- renderText({
     "Correlation_Matrix.csv"
   })
 
-  # メッセージ表示用
   output$message <- renderText({ "" })
 
-  # ボタンがクリックされたときの処理
   observeEvent(input$execute, {
-    # メッセージをリセット
     output$message <- renderText({ "" })
 
-    # 作業ディレクトリの確認
     if (!dir.exists(input$working_dir)) {
       output$message <- renderText({ "エラー: 作業ディレクトリが存在しません。" })
       return()
     }
 
-    # 作業ディレクトリの設定
     setwd(input$working_dir)
 
-    # 出力ファイル名の確認
     if (input$output_filename == "") {
       output$message <- renderText({ "エラー: 出力ファイル名を入力してください。" })
       return()
@@ -66,24 +58,19 @@ server <- function(input, output, session) {
 
     output_filename <- input$output_filename
 
-    # 計算とファイル出力を試行
     tryCatch({
-      # プログレスバーのリセット
       updateProgressBar(session, id = "progress", value = 0)
 
-      # データベース接続とクエリ実行を関数化
       execute_query <- function(con, query) {
         dbGetQuery(con, query)
       }
 
-      # データベース接続
       con <- dbConnect(odbc(),
                        Driver = "SQL Server",
                        Server = "DWAWDB245401,60101",
                        Database = "ICMDEV_5_3_JAPAN",
                        Trusted_Connection = "Yes")
 
-      # SQLクエリ
       queries <- list(
         capital = "SELECT [RunID],[Group],[Allocation],[Entity],[RiskLevel],[Risk],[Value] 
                    FROM [ICM].[Outputs_Capital_GroupAllocationByEntityRisk] 
@@ -99,18 +86,17 @@ server <- function(input, output, session) {
         cat = "SELECT * FROM [ICM].[Outputs_Cat] WHERE OriginPeriodBasis = 'Accident'"
       )
 
-      # クエリ結果の取得
       df_list <- lapply(queries, execute_query, con = con)
       dbDisconnect(con)
 
-      # 各データフレームに名前を付ける
       df_capital <- df_list$capital
       df_opr_oth <- df_list$opr_oth
       df_data_group_versions <- df_list$data_group_versions
       df_cat <- df_list$cat
       df_corr_matrix <- read.csv("Correlation_Matrix.csv")
 
-      # データ処理
+      updateProgressBar(session, id = "progress", value = 20)
+
       df_cat$RunID <- as.numeric(df_cat$RunID)
       df_cat2 <- df_cat %>% 
         filter(RunID > 10300 & 
@@ -122,22 +108,71 @@ server <- function(input, output, session) {
         select(RunID, Group, Allocation, Entity, RiskLevel, Risk, Value)
       df_cat2$Value <- as.numeric(df_cat2$Value)
 
-      updateProgressBar(session, id = "progress", value = 25)
+      df_data_group_versions <- df_data_group_versions %>% 
+        filter(DataGroupID == 3)
 
-      # 他の処理も追加
-      # ...
-      # 処理の合間で進行状況を更新
+      colnames(df_opr_oth)[5] <- "Version2"
+      colnames(df_opr_oth)[9] <- "Value2"
+
+      df_merge <- merge(x = df_opr_oth, y = df_data_group_versions, by.x = "Version", by.y = "Version", all.x = TRUE) 
+
+      df_merge2 <- df_merge %>% mutate(paramID = str_sub(`Const_Ins_UDParams$ID`, start = -1, end = -1)) %>% 
+        filter(RunID > 10300 & paramID == 1 & Version == Version2 & Position != 10) %>% 
+        select(RunID, ID, Position, Value, Value2) %>% 
+        arrange(RunID, Position)
+
+      df_merge3 <- df_merge2 %>% mutate(
+        Entity = str_sub(Value, start = -3, end = -1),
+        Group = "AJH",
+        Allocation = "Standalone VaR",
+        RiskLevel = "5"
+                    ) %>% 
+        rename(Risk = Value, Value = Value2) %>% 
+        select(RunID, Group, Allocation, Entity, RiskLevel, Risk, Value) %>% 
+        filter(Entity != "isk" & Entity != "sks")
+      df_merge3$Entity[df_merge3$Entity == "npo"] <- "Sonpo"
+      df_merge3$Entity[df_merge3$Entity == "AJH"] <- "Total"
+      df_merge3$Value <- as.numeric(df_merge3$Value)
+
       updateProgressBar(session, id = "progress", value = 50)
 
-      # 最終出力処理
-      write_xlsx(df_cat2, file.path(input$working_dir, output_filename))
-      updateProgressBar(session, id = "progress", value = 100)
+      df2 <- df_capital %>% 
+        filter(
+          RunID > 10300 & 
+          Allocation == "Standalone VaR" &
+          ((Risk == "Insurance Risk" & RiskLevel == 4) | 
+           Risk == "Premium Risk Non-Cat" | 
+           (Risk == "Reserve Risk" & RiskLevel == 3) |       
+           (Risk == "Catastrophe Risk" & RiskLevel == 2) |
+           (Risk == "Credit Risk - RI Default" & RiskLevel == 3) |
+           (Risk == "Market Risk" & RiskLevel == 4) |
+           (Risk == "Interest Rate" & RiskLevel == 1) |
+           (Risk == "Equity" & RiskLevel == 1) |
+           (Risk == "Spread" & RiskLevel == 1) |
+           (Risk == "Credit" & RiskLevel == 1) |
+           (Risk == "Non-Insurance Currency Risk" & RiskLevel == 1) |
+           (Risk == "Liquidity Risk" & RiskLevel == 1) |
+           (Risk == "Tax" & RiskLevel == 1) |
+           (Risk == "Total" & RiskLevel == 5))
+        )
 
-      # 成功メッセージ
+      df2$RunID <- as.character(df2$RunID)
+      df_merge3$RunID <- as.character(df_merge3$RunID)
+
+      df3 <- rbind(df2, df_merge3)
+
+      updateProgressBar(session, id = "progress", value = 80)
+
+      df_wide <- pivot_wider(df3,
+                             names_from = RunID,
+                             values_from = Value)
+
+      write_xlsx(df_wide, file.path(input$working_dir, output_filename))
+
+      updateProgressBar(session, id = "progress", value = 100)
       output$message <- renderText({ "計算が完了し、ファイルが保存されました。" })
 
     }, error = function(e) {
-      # エラーメッセージを表示
       output$message <- renderText({ paste("エラーが発生しました:", e$message) })
       updateProgressBar(session, id = "progress", value = 0)
     })
@@ -145,6 +180,7 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui = ui, server = server)
+
 
 
 
