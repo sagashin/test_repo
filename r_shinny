@@ -1,4 +1,78 @@
 library(shiny)
+library(shinyWidgets) # プログレスバー用
+library(readxl)
+library(tidyverse)
+library(tidyr)
+library(data.table)
+library(writexl)
+library(DBI)
+library(odbc)
+library(stringr)
+
+ui <- fluidPage(
+  titlePanel("計算アプリ"),
+  sidebarLayout(
+    sidebarPanel(
+      textInput("working_dir", "作業ディレクトリを入力してください", value = getwd()),
+      textInput("output_filename", "出力ファイル名を入力してください", value = "output.xlsx"),
+      actionButton("execute", "計算を実行")
+    ),
+    mainPanel(
+      h4("使用しているSQLサーバーとデータベース:"),
+      verbatimTextOutput("sql_info"),
+      h4("使用している相関行列ファイル:"),
+      verbatimTextOutput("corr_matrix_file"),
+      h4("進行状況:"),
+      progressBar(id = "progress", value = 0, total = 100, display_pct = TRUE),
+      h4("メッセージ:"),
+      verbatimTextOutput("message")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  # SQLサーバーとデータベースを表示
+  output$sql_info <- renderText({
+    paste("サーバー: DWAWDB245401,60101\nデータベース: ICMDEV_5_3_JAPAN")
+  })
+
+  # 相関行列ファイルを表示
+  output$corr_matrix_file <- renderText({
+    "Correlation_Matrix.csv"
+  })
+
+  # メッセージ表示用
+  output$message <- renderText({ "" })
+
+  # ボタンがクリックされたときの処理
+  observeEvent(input$execute, {
+    # メッセージをリセット
+    output$message <- renderText({ "" })
+
+    # 作業ディレクトリの確認
+    if (!dir.exists(input$working_dir)) {
+      output$message <- renderText({ "エラー: 作業ディレクトリが存在しません。" })
+      return()
+    }
+
+    # 作業ディレクトリの設定
+    setwd(input$working_dir)
+
+    # 出力ファイル名の確認
+    if (input$output_filename == "") {
+      output$message <- renderText({ "エラー: 出力ファイル名を入力してください。" })
+      return()
+    }
+
+    output_filename <- input$output_filename
+
+    # 計算とファイル出力を試行
+ 
+
+
+
+
+library(shiny)
 library(readxl)
 library(tidyverse)
 library(tidyr)
