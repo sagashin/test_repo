@@ -1,0 +1,160 @@
+library(shiny)
+library(shinyWidgets)
+library(readxl)
+library(tidyverse)
+library(tidyr)
+library(data.table)
+library(writexl)
+library(DBI)
+library(odbc)
+library(stringr)
+library(bslib)
+
+ui <- fluidPage(
+  theme = bs_theme(
+    bg = "#f8f9fa", # 背景色
+    fg = "#343a40", # 文字色
+    primary = "#007bff", # プライマリカラーボタン
+    secondary = "#6c757d", # セカンダリカラー
+    base_font = font_google("Roboto") # Googleフォント
+  ),
+  
+  titlePanel("データ計算アプリ", windowTitle = "計算アプリ"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      textInput("working_dir", "作業ディレクトリ", value = getwd()),
+      textInput("output_filename", "出力ファイル名", value = "output.xlsx"),
+      actionButton("execute", "計算を実行", class = "btn btn-primary mt-3"),
+      tags$style(HTML("
+        .btn-primary {
+          background-color: #007bff;
+          border-color: #007bff;
+        }
+        .btn-primary:hover {
+          background-color: #0056b3;
+          border-color: #004085;
+        }
+        .sidebarPanel {
+          padding: 15px;
+          background-color: #ffffff;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+      "))
+    ),
+    
+    mainPanel(
+      h4("使用しているSQLサーバーとデータベース"),
+      verbatimTextOutput("sql_info"),
+      h4("使用している相関行列ファイル"),
+      verbatimTextOutput("corr_matrix_file"),
+      h4("進行状況"),
+      progressBar(id = "progress", value = 0, total = 100, display_pct = TRUE, style = "success"),
+      h4("メッセージ"),
+      verbatimTextOutput("message"),
+      tags$style(HTML("
+        .mainPanel {
+          padding: 15px;
+        }
+        .progress-bar-success {
+          background-color: #28a745;
+        }
+      "))
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  # SQLサーバーとデータベース情報の表示
+  output$sql_info <- renderText({
+    paste("サーバー: DWAWDB245401,60101\nデータベース: ICMDEV_5_3_JAPAN")
+  })
+  
+  # 相関行列ファイル情報の表示
+  output$corr_matrix_file <- renderText({
+    "Correlation_Matrix.csv"
+  })
+  
+  # メッセージの初期化
+  output$message <- renderText({ "" })
+  
+  # 計算実行ボタンの挙動
+  observeEvent(input$execute, {
+    output$message <- renderText({ "" })
+    
+    if (!dir.exists(input$working_dir)) {
+      output$message <- renderText({ "エラー: 作業ディレクトリが存在しません。" })
+      return()
+    }
+    
+    setwd(input$working_dir)
+    
+    if (input$output_filename == "") {
+      output$message <- renderText({ "エラー: 出力ファイル名を入力してください。" })
+      return()
+    }
+    
+    output_filename <- input$output_filename
+    
+    tryCatch({
+      updateProgressBar(session, id = "progress", value = 0)
+      
+      # データベース接続
+      con <- dbConnect(odbc(),
+                       Driver = "SQL Server",
+                       Server = "DWAWDB245401,60101",
+                       Database = "ICMDEV_5_3_JAPAN",
+                       Trusted_Connection = "Yes")
+      
+      # クエリ実行
+      updateProgressBar(session, id = "progress", value = 10)
+      df_capital <- dbGetQuery(con, "SELECT [RunID],[Group],[Allocation],[Entity],[RiskLevel],[Risk],[Value] 
+                                     FROM [ICM].[Outputs_Capital_GroupAllocationByEntityRisk] 
+                                     WHERE Allocation IN ('Standalone VaR','Standalone TVaR','One-Year Co-TVaR')")
+      
+      updateProgressBar(session, id = "progress", value = 30)
+      df_opr_oth <- dbGetQuery(con, "SELECT * FROM [ICM].[Global_UserDefinedDistns_Names$DIM] a 
+                                     INNER JOIN [ICM].[Global_UserDefinedDistns_Parameters$DATA] b 
+                                     ON a.ID = b.Global_UserDefinedDistns_Names$ID")
+      
+      updateProgressBar(session, id = "progress", value = 50)
+      df_data_group_versions <- dbGetQuery(con, "SELECT [Version], [RunID], [DataGroupID] 
+                                                 FROM [WTW].[DATAGROUP_VERSIONS]")
+      
+      df_cat <- dbGetQuery(con, "SELECT * FROM [ICM].[Outputs_Cat] WHERE OriginPeriodBasis = 'Accident'")
+      dbDisconnect(con)
+      
+      # 相関行列の読み込み
+      updateProgressBar(session, id = "progress", value = 60)
+      df_corr_matrix <- read.csv("Correlation_Matrix.csv")
+      
+      # データ処理
+      df_cat2 <- df_cat %>%
+        filter(RunID > 10300 & Class == "Total Insurance" & 
+                 OriginPeriodBasis == "Accident" & Stat == "P99.5") %>%
+        mutate(Group = "AJH", Allocation = "Standalone VaR") %>%
+        rename(RiskLevel = Peril, Risk = Category) %>%
+        select(RunID, Group, Allocation, Entity, RiskLevel, Risk, Value)
+      
+      df_merged <- df_capital %>%
+        bind_rows(df_cat2)
+      
+      # ワイド形式に変換
+      updateProgressBar(session, id = "progress", value = 80)
+      df_wide <- pivot_wider(df_merged, names_from = RunID, values_from = Value)
+      
+      # ファイル書き込み
+      write_xlsx(df_wide, file.path(input$working_dir, output_filename))
+      
+      updateProgressBar(session, id = "progress", value = 100)
+      output$message <- renderText({ "計算が完了し、ファイルが保存されました。" })
+      
+    }, error = function(e) {
+      output$message <- renderText({ paste("エラーが発生しました:", e$message) })
+      updateProgressBar(session, id = "progress", value = 0)
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
