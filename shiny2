@@ -1,0 +1,125 @@
+library(shiny)
+library(shinyWidgets)
+library(bslib)
+
+ui <- fluidPage(
+  theme = bs_theme(
+    bg = "#f8f9fa", # 背景色
+    fg = "#343a40", # 文字色
+    primary = "#007bff", # プライマリーカラー (ボタンなど)
+    secondary = "#6c757d", # セカンダリーカラー
+    base_font = font_google("Roboto") # Googleフォントを使用
+  ),
+  
+  titlePanel("計算アプリ"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      tags$style(HTML("
+        .sidebarPanel {
+          background-color: #ffffff; 
+          border-radius: 10px; 
+          padding: 20px; 
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .actionButton {
+          margin-top: 10px;
+          background-color: #007bff;
+          color: #ffffff;
+          border: none;
+          padding: 10px 15px;
+          border-radius: 5px;
+        }
+        .actionButton:hover {
+          background-color: #0056b3;
+        }
+      ")),
+      
+      textInput("working_dir", "作業ディレクトリを入力してください", value = getwd()),
+      textInput("output_filename", "出力ファイル名を入力してください", value = "output.xlsx"),
+      actionButton("execute", "計算を実行", class = "actionButton")
+    ),
+    
+    mainPanel(
+      tags$style(HTML("
+        .mainPanel {
+          padding: 20px;
+        }
+        .progress-bar {
+          background-color: #28a745 !important; /* プログレスバーの色 */
+        }
+        .panel-heading {
+          font-weight: bold;
+        }
+      ")),
+      
+      h4("使用しているSQLサーバーとデータベース:"),
+      verbatimTextOutput("sql_info"),
+      
+      h4("使用している相関行列ファイル:"),
+      verbatimTextOutput("corr_matrix_file"),
+      
+      h4("進行状況:"),
+      progressBar(id = "progress", value = 0, total = 100, display_pct = TRUE),
+      
+      h4("メッセージ:"),
+      verbatimTextOutput("message")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  # SQLサーバーとデータベースの表示
+  output$sql_info <- renderText({
+    paste("サーバー: DWAWDB245401,60101\nデータベース: ICMDEV_5_3_JAPAN")
+  })
+  
+  # 相関行列ファイルの表示
+  output$corr_matrix_file <- renderText({
+    "Correlation_Matrix.csv"
+  })
+  
+  # メッセージ表示
+  output$message <- renderText({ "" })
+  
+  # 計算ボタンの動作
+  observeEvent(input$execute, {
+    output$message <- renderText({ "" })
+    
+    # 作業ディレクトリの確認
+    if (!dir.exists(input$working_dir)) {
+      output$message <- renderText({ "エラー: 作業ディレクトリが存在しません。" })
+      return()
+    }
+    
+    setwd(input$working_dir)
+    
+    if (input$output_filename == "") {
+      output$message <- renderText({ "エラー: 出力ファイル名を入力してください。" })
+      return()
+    }
+    
+    output_filename <- input$output_filename
+    
+    tryCatch({
+      updateProgressBar(session, id = "progress", value = 0)
+      
+      Sys.sleep(0.5) # サンプル用の遅延 (仮のプロセス開始)
+      updateProgressBar(session, id = "progress", value = 20)
+      
+      Sys.sleep(0.5) # サンプル用の遅延
+      updateProgressBar(session, id = "progress", value = 60)
+      
+      Sys.sleep(0.5) # サンプル用の遅延
+      updateProgressBar(session, id = "progress", value = 100)
+      
+      output$message <- renderText({ "計算が完了し、ファイルが保存されました。" })
+      
+    }, error = function(e) {
+      output$message <- renderText({ paste("エラーが発生しました:", e$message) })
+      updateProgressBar(session, id = "progress", value = 0)
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
