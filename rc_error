@@ -1,0 +1,17 @@
+cov2cor(varcovar) で警告がありました:
+  diag(V) had non-positive or NA entries; the non-finite result may be dubious
+sqrt(diag(varcovar)) で警告がありました: 計算結果が NaN になりました
+fitdist(loss_data(), "gumbel", start = list(loc = min(loss_data()),  で警告がありました:
+  The dgumbel function should return a vector of with NaN values when input has inconsistent parameters and not raise an error
+fitdist(loss_data(), "gumbel", start = list(loc = min(loss_data()),  で警告がありました:
+  The pgumbel function should return a vector of with NaN values when input has inconsistent parameters and not raise an error
+警告: Error in $: $ operator is invalid for atomic vectors
+  169: ggplot [C:/Users/ssagara/OneDrive - American International Group, Inc/rc_app.R#149]
+  168: renderPlot [C:/Users/ssagara/OneDrive - American International Group, Inc/rc_app.R#149]
+  166: func
+  126: drawPlot
+  112: <reactive:plotObj>
+   96: drawReactive
+   83: renderFunc
+   82: output$risk_curve_plot
+    1: runApp
