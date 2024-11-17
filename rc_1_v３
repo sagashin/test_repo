@@ -8,6 +8,7 @@ library(evir)
 library(actuar)
 library(tidyverse)
 library(scales)
+library(evd)  # Gumbel分布の関数を使用するために追加
 
 ui <- fluidPage(
   titlePanel("リスクカーブ分析"),
@@ -89,7 +90,7 @@ server <- function(input, output, session) {
       fit_list$fp <- fitdist(loss_data(), "pareto", start = list(shape = 10, scale = 10), 
                              lower = 2 + 1e-6, upper = Inf)
       incProgress(0.1)
-      fit_list$fgum <- fitdist(loss_data(), "gumbel")
+      fit_list$fgum <- fitdist(loss_data(), "gumbel", start = list(loc = min(loss_data()), scale = sd(loss_data())))
     })
   })
   
@@ -107,99 +108,111 @@ server <- function(input, output, session) {
   # gofstatの結果を表示
   output$gofstat_output <- renderPrint({
     req(fit_list$fw)
-    gofstat(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp, fit_list$fgum), 
-            fitnames = c("Weibull", "Lognormal", "Gamma", "Pareto", "Gumbel"))
+    print(
+      gofstat(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp, fit_list$fgum), 
+              fitnames = c("Weibull", "Lognormal", "Gamma", "Pareto", "Gumbel"))
+    )
   })
   
-  # リスクカーブの作成と表示
+  # リスクカーブデータを生成するreactive関数
+  risk_curve_data <- eventReactive(input$plot_button, {
+    req(loss_data())
+    dist_name <- switch(input$distribution,
+                        "Weibull" = "weibull",
+                        "Lognormal" = "lnorm",
+                        "Gamma" = "gamma",
+                        "Pareto" = "pareto",
+                        "Gumbel" = "gumbel")
+    fit <- fit_list[[paste0("f", substr(dist_name, 1, 2))]]
+    req(fit)
+    
+    # 市場データの取得
+    market_loss <- input$market_loss
+    market_return_period <- input$market_return_period
+    exceedance_prob <- 1 / market_return_period
+    
+    # 分布パラメータの調整
+    objective_function <- function(params) {
+      estimated_loss <- switch(dist_name,
+                               "weibull" = qweibull(1 - exceedance_prob, shape = params[1], scale = params[2]),
+                               "lnorm" = qlnorm(1 - exceedance_prob, meanlog = params[1], sdlog = params[2]),
+                               "gamma" = qgamma(1 - exceedance_prob, shape = params[1], rate = params[2]),
+                               "pareto" = qpareto(1 - exceedance_prob, shape = params[1], scale = params[2]),
+                               "gumbel" = qgumbel(1 - exceedance_prob, loc = params[1], scale = params[2]))
+      return((estimated_loss - market_loss)^2)
+    }
+    
+    # 初期パラメータの設定
+    initial_params <- as.list(fit$estimate)
+    initial_values <- as.numeric(initial_params)
+    
+    # 最適化の実行
+    optim_result <- optim(par = initial_values, fn = objective_function)
+    params_adj <- optim_result$par
+    
+    # 再現期間の設定（シナリオの再現期間を含める）
+    max_return_period <- max(200, market_return_period) * 1.2  # 余裕を持たせる
+    return_periods <- seq(1, max_return_period, by = 1)
+    exceedance_probs <- 1 / return_periods
+    
+    # 調整済みパラメータを使用して損害額を推定
+    loss_estimates <- switch(dist_name,
+                             "weibull" = qweibull(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]),
+                             "lnorm" = qlnorm(1 - exceedance_probs, meanlog = params_adj[1], sdlog = params_adj[2]),
+                             "gamma" = qgamma(1 - exceedance_probs, shape = params_adj[1], rate = params_adj[2]),
+                             "pareto" = qpareto(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]),
+                             "gumbel" = qgumbel(1 - exceedance_probs, loc = params_adj[1], scale = params_adj[2]))
+    
+    risk_curve <- data.frame(
+      ReturnPeriod = return_periods,
+      LossAmount = loss_estimates / 1e6  # 百万円単位に変換
+    )
+    
+    # シナリオのポイント
+    scenario_point <- data.frame(
+      ReturnPeriod = market_return_period,
+      LossAmount = market_loss / 1e6
+    )
+    
+    # 200年に一度のポイント
+    exceedance_prob_200 <- 1 / 200
+    PML_200 <- switch(dist_name,
+                      "weibull" = qweibull(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]),
+                      "lnorm" = qlnorm(1 - exceedance_prob_200, meanlog = params_adj[1], sdlog = params_adj[2]),
+                      "gamma" = qgamma(1 - exceedance_prob_200, shape = params_adj[1], rate = params_adj[2]),
+                      "pareto" = qpareto(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]),
+                      "gumbel" = qgumbel(1 - exceedance_prob_200, loc = params_adj[1], scale = params_adj[2]))
+    PML_200 <- PML_200 / 1e6  # 百万円単位に変換
+    point_200 <- data.frame(
+      ReturnPeriod = 200,
+      LossAmount = PML_200
+    )
+    
+    # データをリストで返す
+    list(
+      risk_curve = risk_curve,
+      scenario_point = scenario_point,
+      point_200 = point_200
+    )
+  })
+  
+  # プロットのレンダリング
   output$risk_curve_plot <- renderPlot({
-    input$plot_button
-    isolate({
-      req(loss_data())
-      dist_name <- switch(input$distribution,
-                          "Weibull" = "weibull",
-                          "Lognormal" = "lnorm",
-                          "Gamma" = "gamma",
-                          "Pareto" = "pareto",
-                          "Gumbel" = "gumbel")
-      fit <- fit_list[[paste0("f", substr(dist_name, 1, 2))]]
-      req(fit)
-      
-      # 市場データの取得
-      market_loss <- input$market_loss
-      market_return_period <- input$market_return_period
-      exceedance_prob <- 1 / market_return_period
-      
-      # 分布パラメータの調整
-      objective_function <- function(params) {
-        estimated_loss <- switch(dist_name,
-                                 "weibull" = qweibull(1 - exceedance_prob, shape = params[1], scale = params[2]),
-                                 "lnorm" = qlnorm(1 - exceedance_prob, meanlog = params[1], sdlog = params[2]),
-                                 "gamma" = qgamma(1 - exceedance_prob, shape = params[1], rate = params[2]),
-                                 "pareto" = qpareto(1 - exceedance_prob, shape = params[1], scale = params[2]),
-                                 "gumbel" = qgumbel(1 - exceedance_prob, alpha = params[1], scale = params[2]))
-        return((estimated_loss - market_loss)^2)
-      }
-      
-      # 初期パラメータの設定
-      initial_params <- as.list(fit$estimate)
-      initial_values <- as.numeric(initial_params)
-      
-      # 最適化の実行
-      optim_result <- optim(par = initial_values, fn = objective_function)
-      params_adj <- optim_result$par
-      
-      # 再現期間の設定（シナリオの再現期間を含める）
-      max_return_period <- max(200, market_return_period) * 1.2  # 余裕を持たせる
-      return_periods <- seq(1, max_return_period, by = 1)
-      exceedance_probs <- 1 / return_periods
-      
-      # 調整済みパラメータを使用して損害額を推定
-      loss_estimates <- switch(dist_name,
-                               "weibull" = qweibull(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]),
-                               "lnorm" = qlnorm(1 - exceedance_probs, meanlog = params_adj[1], sdlog = params_adj[2]),
-                               "gamma" = qgamma(1 - exceedance_probs, shape = params_adj[1], rate = params_adj[2]),
-                               "pareto" = qpareto(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]),
-                               "gumbel" = qgumbel(1 - exceedance_probs, alpha = params_adj[1], scale = params_adj[2]))
-      
-      risk_curve <- data.frame(
-        ReturnPeriod = return_periods,
-        LossAmount = loss_estimates / 1e6  # 百万円単位に変換
-      )
-      
-      # シナリオのポイント
-      scenario_point <- data.frame(
-        ReturnPeriod = market_return_period,
-        LossAmount = market_loss / 1e6
-      )
-      
-      # 200年に一度のポイント
-      exceedance_prob_200 <- 1 / 200
-      PML_200 <- switch(dist_name,
-                        "weibull" = qweibull(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]),
-                        "lnorm" = qlnorm(1 - exceedance_prob_200, meanlog = params_adj[1], sdlog = params_adj[2]),
-                        "gamma" = qgamma(1 - exceedance_prob_200, shape = params_adj[1], rate = params_adj[2]),
-                        "pareto" = qpareto(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]),
-                        "gumbel" = qgumbel(1 - exceedance_prob_200, alpha = params_adj[1], scale = params_adj[2]))
-      PML_200 <- PML_200 / 1e6  # 百万円単位に変換
-      point_200 <- data.frame(
-        ReturnPeriod = 200,
-        LossAmount = PML_200
-      )
-      
-      # リスクカーブのプロット
-      ggplot(risk_curve, aes(x = ReturnPeriod, y = LossAmount)) +
-        geom_line(color = "blue") +
-        geom_point(data = scenario_point, aes(x = ReturnPeriod, y = LossAmount), color = "red", size = 3) +
-        geom_text(data = scenario_point, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
-        geom_point(data = point_200, aes(x = ReturnPeriod, y = LossAmount), color = "green", size = 3) +
-        geom_text(data = point_200, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
-        scale_y_continuous(labels = comma) +
-        labs(title = "リスクカーブ",
-             x = "再現期間（年）",
-             y = "損害額（百万円）") +
-        theme_minimal()
-    })
+    req(input$plot_button > 0)
+    data <- risk_curve_data()
+    
+    ggplot(data$risk_curve, aes(x = ReturnPeriod, y = LossAmount)) +
+      geom_line(color = "blue") +
+      geom_point(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount), color = "red", size = 3) +
+      geom_text(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
+      geom_point(data = data$point_200, aes(x = ReturnPeriod, y = LossAmount), color = "green", size = 3) +
+      geom_text(data = data$point_200, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
+      scale_y_continuous(labels = comma) +
+      labs(title = "リスクカーブ",
+           x = "再現期間（年）",
+           y = "損害額（百万円）") +
+      theme_minimal()
+  })
   
 }
 
