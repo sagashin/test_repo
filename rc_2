@@ -207,4 +207,15 @@ server <- function(input, output, session) {
       geom_line(color = "blue") +
       geom_point(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount), color = "red", size = 3) +
       geom_text(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
-      geom_point(data = data$point_200, aes(x = ReturnPeriod, y = L
+      geom_point(data = data$point_200, aes(x = ReturnPeriod, y = LossAmount), color = "green", size = 3) +
+      geom_text(data = data$point_200, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
+      scale_y_continuous(labels = comma) +
+      labs(title = "リスクカーブ",
+           x = "再現期間（年）",
+           y = "損害額（百万円）") +
+      theme_minimal()
+  })
+  
+}
+
+shinyApp(ui = ui, server = server)
