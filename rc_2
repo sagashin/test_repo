@@ -1,0 +1,210 @@
+# app.R
+
+# ファイルサイズの上限設定
+options(shiny.maxRequestSize = 50 * 1024^2)
+
+library(shiny)
+library(readxl)
+library(fitdistrplus)
+library(ggplot2)
+library(evir)
+library(actuar)
+library(tidyverse)
+library(scales)
+# library(evd)  # Gumbel分布を除外するため、コメントアウト
+
+ui <- fluidPage(
+  titlePanel("リスクカーブ分析"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      # 1. 入力データのフォルダパスとファイル名の選択
+      fileInput("datafile", "Excelファイルを選択", accept = c(".xlsx", ".xls")),
+      
+      # 2. Meplot実行ボタンを追加
+      actionButton("run_meplot", "Meplotを実行"),
+      
+      # 3. 閾値の設定（meplotを参照して設定）
+      numericInput("threshold", "閾値の金額を設定（円）", value = 1.8e7, min = 0, step = 1e6),
+      
+      # 4. 分布のフィッティングと評価の実行ボタン
+      actionButton("run_button", "分布のフィッティングを実行"),
+      
+      # 5. フィットした分布から選択（Gumbelを除外）
+      selectInput("distribution", "分布を選択",
+                  choices = c("Weibull", "Lognormal", "Gamma", "Pareto")),
+      
+      # 6. 市場データの損失シナリオと再現期間の入力
+      numericInput("market_loss", "市場データの損失シナリオ（円）", value = 1e8, min = 0, step = 1e7),
+      numericInput("market_return_period", "市場データの再現期間（年）", value = 50, min = 1, step = 1),
+      
+      # 7. リスクカーブの作成と表示の実行ボタン
+      actionButton("plot_button", "リスクカーブを作成")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Meplot",
+                 plotOutput("meplot")),
+        tabPanel("分布のフィッティング",
+                 plotOutput("dist_plots"),
+                 verbatimTextOutput("gofstat_output")),
+        tabPanel("リスクカーブ",
+                 plotOutput("risk_curve_plot"))
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  # データの読み込み
+  data <- reactive({
+    req(input$datafile)
+    df <- read_excel(input$datafile$datapath)
+    return(df)
+  })
+  
+  # Meplotの描画
+  observeEvent(input$run_meplot, {
+    output$meplot <- renderPlot({
+      req(data())
+      meplot(data()$LOSS)  # LOSS列を使用してmeplotを描画
+    })
+  })
+  
+  # 閾値以上の損害額データを取得
+  loss_data <- reactive({
+    req(data())
+    threshold <- input$threshold
+    loss <- data() %>% filter(LOSS > threshold)
+    return(loss$LOSS)
+  })
+  
+  # フィットした分布を格納するリスト
+  fit_list <- reactiveValues()
+  
+  # 分布のフィッティングを実行（Gumbelを除外）
+  observeEvent(input$run_button, {
+    req(loss_data())
+    withProgress(message = '分布をフィッティング中...', value = 0, {
+      incProgress(0.25)
+      fit_list$fw <- fitdist(loss_data(), "weibull")
+      incProgress(0.25)
+      fit_list$fln <- fitdist(loss_data(), "lnorm")
+      incProgress(0.25)
+      fit_list$fga <- fitdist(loss_data(), "gamma")
+      incProgress(0.25)
+      fit_list$fp <- fitdist(loss_data(), "pareto", start = list(shape = 10, scale = 10), 
+                             lower = 2 + 1e-6, upper = Inf)
+      # Gumbel分布のフィッティングを除外
+    })
+  })
+  
+  # フィッティング結果のプロットを表示
+  output$dist_plots <- renderPlot({
+    req(fit_list$fw)
+    par(mfrow = c(2, 2))
+    plot.legend <- c("Weibull", "Lognormal", "Gamma", "Pareto")
+    denscomp(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp), legendtext = plot.legend)
+    qqcomp(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp), legendtext = plot.legend)
+    cdfcomp(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp), legendtext = plot.legend)
+    ppcomp(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp), legendtext = plot.legend)
+  })
+  
+  # gofstatの結果を表示
+  output$gofstat_output <- renderPrint({
+    req(fit_list$fw)
+    print(
+      gofstat(list(fit_list$fw, fit_list$fln, fit_list$fga, fit_list$fp), 
+              fitnames = c("Weibull", "Lognormal", "Gamma", "Pareto"))
+    )
+  })
+  
+  # リスクカーブデータを生成するreactive関数
+  risk_curve_data <- eventReactive(input$plot_button, {
+    req(loss_data())
+    dist_name <- switch(input$distribution,
+                        "Weibull" = "weibull",
+                        "Lognormal" = "lnorm",
+                        "Gamma" = "gamma",
+                        "Pareto" = "pareto")
+    fit <- fit_list[[paste0("f", substr(dist_name, 1, 2))]]
+    req(fit)
+    
+    # 市場データの取得
+    market_loss <- input$market_loss
+    market_return_period <- input$market_return_period
+    exceedance_prob <- 1 / market_return_period
+    
+    # 分布パラメータの調整
+    objective_function <- function(params) {
+      estimated_loss <- switch(dist_name,
+                               "weibull" = qweibull(1 - exceedance_prob, shape = params[1], scale = params[2]),
+                               "lnorm" = qlnorm(1 - exceedance_prob, meanlog = params[1], sdlog = params[2]),
+                               "gamma" = qgamma(1 - exceedance_prob, shape = params[1], rate = params[2]),
+                               "pareto" = qpareto(1 - exceedance_prob, shape = params[1], scale = params[2]))
+      return((estimated_loss - market_loss)^2)
+    }
+    
+    # 初期パラメータの設定
+    initial_params <- as.list(fit$estimate)
+    initial_values <- as.numeric(initial_params)
+    
+    # 最適化の実行
+    optim_result <- optim(par = initial_values, fn = objective_function)
+    params_adj <- optim_result$par
+    
+    # 再現期間の設定（シナリオの再現期間を含める）
+    max_return_period <- max(200, market_return_period) * 1.2  # 余裕を持たせる
+    return_periods <- seq(1, max_return_period, by = 1)
+    exceedance_probs <- 1 / return_periods
+    
+    # 調整済みパラメータを使用して損害額を推定
+    loss_estimates <- switch(dist_name,
+                             "weibull" = qweibull(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]),
+                             "lnorm" = qlnorm(1 - exceedance_probs, meanlog = params_adj[1], sdlog = params_adj[2]),
+                             "gamma" = qgamma(1 - exceedance_probs, shape = params_adj[1], rate = params_adj[2]),
+                             "pareto" = qpareto(1 - exceedance_probs, shape = params_adj[1], scale = params_adj[2]))
+    
+    risk_curve <- data.frame(
+      ReturnPeriod = return_periods,
+      LossAmount = loss_estimates / 1e6  # 百万円単位に変換
+    )
+    
+    # シナリオのポイント
+    scenario_point <- data.frame(
+      ReturnPeriod = market_return_period,
+      LossAmount = market_loss / 1e6
+    )
+    
+    # 200年に一度のポイント
+    exceedance_prob_200 <- 1 / 200
+    PML_200 <- switch(dist_name,
+                      "weibull" = qweibull(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]),
+                      "lnorm" = qlnorm(1 - exceedance_prob_200, meanlog = params_adj[1], sdlog = params_adj[2]),
+                      "gamma" = qgamma(1 - exceedance_prob_200, shape = params_adj[1], rate = params_adj[2]),
+                      "pareto" = qpareto(1 - exceedance_prob_200, shape = params_adj[1], scale = params_adj[2]))
+    PML_200 <- PML_200 / 1e6  # 百万円単位に変換
+    point_200 <- data.frame(
+      ReturnPeriod = 200,
+      LossAmount = PML_200
+    )
+    
+    # データをリストで返す
+    list(
+      risk_curve = risk_curve,
+      scenario_point = scenario_point,
+      point_200 = point_200
+    )
+  })
+  
+  # プロットのレンダリング
+  output$risk_curve_plot <- renderPlot({
+    req(input$plot_button > 0)
+    data <- risk_curve_data()
+    ggplot(data$risk_curve, aes(x = ReturnPeriod, y = LossAmount)) +
+      geom_line(color = "blue") +
+      geom_point(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount), color = "red", size = 3) +
+      geom_text(data = data$scenario_point, aes(x = ReturnPeriod, y = LossAmount, label = round(LossAmount, 1)), vjust = -1, size = 3) +
+      geom_point(data = data$point_200, aes(x = ReturnPeriod, y = L
