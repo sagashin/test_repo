@@ -2,16 +2,20 @@ Function Get_Data(sourceRow As Long) As Boolean
     Dim sourcePath As String
     Dim sourceFile As String
     Dim sourceSheet As String
-    Dim sourceRange As String
+    Dim sourceRangeStr As String
+    Dim destCellStr As String
+    Dim sourceRanges() As String
+    Dim destCells() As String
     Dim destCell As Range
     Dim sourceWorkbook As Workbook
     Dim currentWorkbook As Workbook
-    Dim password As String
     Dim destSheet As String
-    Dim destSheetCell As String
     Dim importSheet As Worksheet
     Dim Filename As String
     Dim wildcardPattern As String
+    Dim i As Integer
+    Dim sourceRng As Range
+    Dim destRng As Range
     
     Application.ScreenUpdating = False
     Application.EnableEvents = False
@@ -41,41 +45,53 @@ Function Get_Data(sourceRow As Long) As Boolean
         Exit Function
     End If
     
-    ' 目的のシートとセルを設定
+    ' 目的のシートを設定
     destSheet = importSheet.Range("E" & sourceRow).Value
-    destSheetCell = importSheet.Range("F" & sourceRow).Value
-
+    
     ' セルから情報を取得
     sourceFile = importSheet.Range("B" & sourceRow).Value
     sourceSheet = importSheet.Range("C" & sourceRow).Value
-    sourceRange = importSheet.Range("D" & sourceRow).Value
-    Set destCell = currentWorkbook.Sheets(destSheet).Range(destSheetCell)
+    sourceRangeStr = importSheet.Range("D" & sourceRow).Value
+    destCellStr = importSheet.Range("F" & sourceRow).Value
+    
+    ' ソースレンジとデスティネーションセルを配列に分割
+    sourceRanges = Split(sourceRangeStr, ",")
+    destCells = Split(destCellStr, ",")
+    
+    ' ソースレンジとデスティネーションセルの数が一致するか確認
+    If UBound(sourceRanges) <> UBound(destCells) Then
+        MsgBox "ソースレンジとデスティネーションセルの数が一致しません。"
+        Get_Data = False
+        Exit Function
+    End If
        
     On Error GoTo ErrorHandler
-
+    
     ' ソースワークブックを開く
     Set sourceWorkbook = Workbooks.Open(Filename:=sourcePath & "\" & sourceFile, ReadOnly:=True)
-
-    ' コピー＆ペースト（値と書式）
-    sourceWorkbook.Sheets(sourceSheet).Range(sourceRange).Copy
-    destCell.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+    
+    ' 各レンジをループしてコピー＆ペースト
+    For i = 0 To UBound(sourceRanges)
+        Set sourceRng = sourceWorkbook.Sheets(sourceSheet).Range(Trim(sourceRanges(i)))
+        Set destRng = currentWorkbook.Sheets(destSheet).Range(Trim(destCells(i)))
+        
+        ' コピー＆ペースト（値と書式）
+        sourceRng.Copy
+        destRng.PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+    Next i
     
     ' ソースワークブックを閉じる（保存せずに）
     sourceWorkbook.Close SaveChanges:=False
     
     Call importSheet.Activate
-
+    
     ' 成功した場合に "Done " & 日付を設定
     importSheet.Range("H" & sourceRow).Value = "Done " & Date
     Get_Data = True ' 成功を返す
     Exit Function
-    
+        
 ErrorHandler:
     ' エラーが発生した場合に "Fail" を設定
     importSheet.Range("H" & sourceRow).Value = "Fail"
     Get_Data = False ' 失敗を返す
 End Function
-
-
-
-
