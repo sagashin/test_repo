@@ -1,3 +1,128 @@
+' VBAマクロ: データを他のブックから指定されたシート（ワイルドカード指定）とセルにコピペ
+' Importシートに管理されているパス、ワイルドカードパターン、セル範囲に基づく
+' A列で実行フラグを管理、C列にワイルドカードパターンを入れ、D列に実行時に確定したシート名を入れる
+
+Sub ImportDataFromExternalFiles()
+    Dim wbSource As Workbook, wbTarget As Workbook
+    Dim wsImport As Worksheet, wsTarget As Worksheet
+    Dim ws As Worksheet
+    
+    Dim executeFlag As String
+    Dim sourcePath As String, sourcePattern As String, sourceSheet As String, sourceCells As String
+    Dim targetSheetName As String, targetRange As String
+    
+    Dim lastRow As Long, i As Long
+    Dim targetSheetExists As Boolean
+    
+    ' マクロはPERSONAL.XLSBに格納可能
+    ' 実行時にアクティブなブック（Importシートを持つブック）を参照
+    Set wsImport = ActiveWorkbook.Sheets("Import")
+    Set wbTarget = ActiveWorkbook
+    
+    ' Importシートのデータがどこまであるか確認
+    lastRow = wsImport.Cells(wsImport.Rows.Count, "B").End(xlUp).Row  ' B列はパスが入る列なのでそれを基準
+    
+    ' Importシートのデータをループして処理
+    For i = 2 To lastRow ' 1行目はタイトルのため2行目から開始
+        
+        ' 実行フラグ(A列)
+        executeFlag = wsImport.Cells(i, "A").Value
+        If LCase(executeFlag) <> "yes" And LCase(executeFlag) <> "run" Then
+            ' 実行フラグがYes/Runでなければスキップ
+            GoTo NextIteration
+        End If
+        
+        sourcePath = wsImport.Cells(i, "B").Value ' 別ブックのパス
+        sourcePattern = wsImport.Cells(i, "C").Value ' コピー元シート名のワイルドカードパターン
+        sourceCells = wsImport.Cells(i, "E").Value ' コピー元セル範囲
+        targetSheetName = wsImport.Cells(i, "F").Value ' 取り込み先シート名
+        targetRange = wsImport.Cells(i, "G").Value ' コピー先のセル範囲
+        
+        ' 必要な情報が揃っていなければスキップ
+        If sourcePath = "" Or sourcePattern = "" Or sourceCells = "" Or targetSheetName = "" Or targetRange = "" Then
+            GoTo NextIteration
+        End If
+        
+        ' 取り込み先のシートが存在するか確認
+        targetSheetExists = False
+        For Each wsTarget In wbTarget.Sheets
+            If wsTarget.Name = targetSheetName Then
+                targetSheetExists = True
+                Exit For
+            End If
+        Next wsTarget
+        
+        ' シートが存在しない場合は作成する
+        If Not targetSheetExists Then
+            Set wsTarget = wbTarget.Sheets.Add(After:=wbTarget.Sheets(wbTarget.Sheets.Count))
+            wsTarget.Name = targetSheetName
+        Else
+            Set wsTarget = wbTarget.Sheets(targetSheetName)
+        End If
+        
+        ' コピー元ブックを開く
+        On Error Resume Next
+        Set wbSource = Workbooks.Open(sourcePath)
+        If wbSource Is Nothing Then
+            MsgBox "Failed to open source workbook: " & sourcePath, vbExclamation
+            GoTo NextIteration
+        End If
+        On Error GoTo 0
+        
+        ' ワイルドカードパターンに合うシートを探す
+        sourceSheet = ""
+        For Each ws In wbSource.Worksheets
+            If ws.Name Like sourcePattern Then
+                sourceSheet = ws.Name
+                Exit For
+            End If
+        Next ws
+        
+        ' 該当するシートが見つからなければスキップ
+        If sourceSheet = "" Then
+            MsgBox "No sheet found matching pattern: " & sourcePattern & vbCrLf & "In workbook: " & sourcePath, vbExclamation
+            wbSource.Close False
+            GoTo NextIteration
+        End If
+        
+        ' 見つかった実際のシート名をD列に書き込み
+        wsImport.Cells(i, "D").Value = sourceSheet
+        
+        ' コピー元データを指定範囲からコピーして貼り付け
+        wbSource.Worksheets(sourceSheet).Range(sourceCells).Copy
+        wsTarget.Range(targetRange).PasteSpecial xlPasteValues
+        
+        ' コピー元ブックを閉じる
+        wbSource.Close False
+        
+        ' 取り込みが完了したらImportシートにDoneと日付を記録(H列, I列)
+        wsImport.Cells(i, "H").Value = "Done"
+        wsImport.Cells(i, "I").Value = Now
+        
+NextIteration:
+    Next i
+    
+    MsgBox "データのインポートが完了しました。", vbInformation
+End Sub
+
+' 注意点：
+' 1. このマクロはPERSONAL.XLSBに格納可能
+' 2. 実行時にアクティブなブックに"Import"シートが存在し、以下の構成で管理
+'    A列: 実行フラグ ("Yes"/"Run"で実行, その他でスキップ)
+'    B列: コピー元のブックのパス
+'    C列: コピー元シート名ワイルドカードパターン (例: "*Data")
+'    D列: 実際のコピー元シート名(実行時に特定して書き込まれる)
+'    E列: コピー元セル範囲 (例: A1:D10)
+'    F列: 取り込み先シート名
+'    G列: 貼り付け先セル範囲 (例: A1)
+'    H列: 完了ステータス ("Done")
+'    I列: 完了日時
+' 3. sourcePathでブックを開き、C列のパターンと一致するシートを探してD列に書き込む
+' 4. シート名が見つからなければ処理スキップ
+' 5. Done後にH/I列を更新
+
+
+
 ' VBAマクロ: データを他のブックから指定されたシートとセルにコピペ
 ' Importシートに管理されているパス、シート名、セル範囲に基づく
 ' H列で実行可否を管理（"Yes"なら実行、空白や"No"ならスキップ）
