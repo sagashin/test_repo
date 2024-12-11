@@ -1,5 +1,98 @@
 ' VBAマクロ: データを他のブックから指定されたシートとセルにコピペ
 ' Importシートに管理されているパス、シート名、セル範囲に基づく
+' H列で実行可否を管理（"Yes"なら実行、空白や"No"ならスキップ）
+
+Sub ImportDataFromExternalFiles()
+    Dim wbSource As Workbook, wbTarget As Workbook
+    Dim wsImport As Worksheet, wsTarget As Worksheet
+    Dim targetSheetName As String
+    Dim sourcePath As String, targetRange As String
+    Dim lastRow As Long, i As Long
+    Dim targetSheetExists As Boolean
+    Dim sourceSheet As String, sourceCells As String
+    Dim executeFlag As String
+    
+    ' マクロはPERSONAL.XLSBなどに置き、実行時アクティブなブックをターゲットとする
+    Set wsImport = ActiveWorkbook.Sheets("Import")
+    Set wbTarget = ActiveWorkbook
+    
+    ' Importシートのデータがどこまであるか確認
+    lastRow = wsImport.Cells(wsImport.Rows.Count, "A").End(xlUp).Row
+    
+    ' Importシートのデータをループして処理
+    For i = 2 To lastRow ' 1行目はタイトルのため2行目から開始
+        
+        ' 実行フラグ確認 (H列)
+        executeFlag = wsImport.Cells(i, "H").Value
+        If LCase(executeFlag) <> "yes" And LCase(executeFlag) <> "run" Then
+            ' "Yes"でも"Run"でもない場合スキップ
+            GoTo NextIteration
+        End If
+        
+        sourcePath = wsImport.Cells(i, "A").Value ' 別ブックのパス
+        sourceSheet = wsImport.Cells(i, "B").Value ' コピー元シート名
+        sourceCells = wsImport.Cells(i, "C").Value ' コピー元セル範囲 (例: A1:D10)
+        targetSheetName = wsImport.Cells(i, "D").Value ' 取り込み先シート名
+        targetRange = wsImport.Cells(i, "E").Value ' コピー先のセル範囲
+        
+        ' パスが空白ならスキップ
+        If sourcePath = "" Then GoTo NextIteration
+        ' 必要な情報が揃っていない場合スキップ
+        If sourceSheet = "" Or sourceCells = "" Or targetSheetName = "" Or targetRange = "" Then GoTo NextIteration
+        
+        ' 取り込み先のシートが存在するか確認
+        targetSheetExists = False
+        For Each wsTarget In wbTarget.Sheets
+            If wsTarget.Name = targetSheetName Then
+                targetSheetExists = True
+                Exit For
+            End If
+        Next wsTarget
+        
+        ' シートが存在しない場合は作成する
+        If Not targetSheetExists Then
+            Set wsTarget = wbTarget.Sheets.Add(After:=wbTarget.Sheets(wbTarget.Sheets.Count))
+            wsTarget.Name = targetSheetName
+        Else
+            Set wsTarget = wbTarget.Sheets(targetSheetName)
+        End If
+        
+        ' コピー元ブックを開く
+        On Error Resume Next
+        Set wbSource = Workbooks.Open(sourcePath)
+        If wbSource Is Nothing Then
+            MsgBox "Failed to open source workbook: " & sourcePath, vbExclamation
+            GoTo NextIteration
+        End If
+        On Error GoTo 0
+        
+        ' コピー元データを指定範囲からコピーして貼り付け
+        wbSource.Worksheets(sourceSheet).Range(sourceCells).Copy
+        wsTarget.Range(targetRange).PasteSpecial xlPasteValues
+        
+        ' コピー元ブックを閉じる
+        wbSource.Close False
+        
+        ' 取り込みが完了したらImportシートにDoneと日付を記録
+        wsImport.Cells(i, "F").Value = "Done"
+        wsImport.Cells(i, "G").Value = Now
+        
+NextIteration:
+    Next i
+    
+    MsgBox "データのインポートが完了しました。", vbInformation
+End Sub
+
+' 注意点：
+' 1. このマクロはPERSONAL.XLSBに格納したままでOK
+' 2. 実行時にアクティブなブックに"Import"シートが存在し、H列に"Yes"または"Run"と記載された行だけ実行される
+' 3. "Yes"または"Run"でない行はスキップされるため、実行したくない行はH列を空欄または"No"などにする
+' 4. Importシートのその他の列構成は以前と同様
+
+
+
+' VBAマクロ: データを他のブックから指定されたシートとセルにコピペ
+' Importシートに管理されているパス、シート名、セル範囲に基づく
 
 Sub ImportDataFromExternalFiles()
     Dim wbSource As Workbook, wbTarget As Workbook
