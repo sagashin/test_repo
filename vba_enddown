@@ -1,0 +1,23 @@
+Sub CopyFrom10thRowEndDown()
+    Dim ws As Worksheet
+    Dim startCell As Range
+    Dim copyRange As Range
+
+    ' 対象シートを指定
+    Set ws = ThisWorkbook.Sheets("Sheet1") ' シート名を適切に変更
+    
+    ' 10行目の開始セルを設定 (例: A列の場合)
+    Set startCell = ws.Range("A10")
+    
+    ' EndDownで最終行までの範囲を取得
+    Set copyRange = ws.Range(startCell, startCell.End(xlDown))
+    
+    ' 取得した範囲をコピー
+    copyRange.Copy
+    
+    ' コピー先を指定（例：Sheet2のB1セル）
+    ThisWorkbook.Sheets("Sheet2").Range("B1").PasteSpecial xlPasteValues
+    
+    ' コピー後のクリップボードをクリア
+    Application.CutCopyMode = False
+End Sub
