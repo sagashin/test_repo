@@ -1,0 +1,166 @@
+###############################################################################
+# 倉庫火災のリスクカーブ（パレート分布 & 一般化パレート分布）サンプルコード
+###############################################################################
+
+#### 0. パッケージインストール（初回のみ） ###################################
+# install.packages("actuar")
+# install.packages("evir")
+# install.packages("fitdistrplus")
+
+#### 1. ライブラリの読み込み ##################################################
+library(actuar)
+library(evir)
+library(fitdistrplus)
+
+#### 2. データの準備 ##########################################################
+# (1) 観測例データ: 焼失面積（m^2）
+#    実際には、過去の火災事例を多数集めたデータフレームなどを用意して
+#    obs_area <- [過去の焼失面積のベクトル] とします。
+#    ここではサンプルとして2件のみ。
+obs_area <- c(3500, 45000)
+
+# (2) 1,000 m^2 あたり 3億円の損害額（既に過失35％を織り込んでいる設定）
+#     -> 1 m^2 あたり 3e5 円 ( = 30万円)
+damage_per_m2 <- 3e5
+
+# (3) 損害額計算関数
+calc_damage <- function(area) {
+  area * damage_per_m2
+}
+
+# (4) 観測データの損害額を計算
+obs_damage_calc <- calc_damage(obs_area)
+cat("サンプルの焼失面積：", obs_area, "\n")
+cat("サンプルの損害額 ：", obs_damage_calc, "\n\n")
+
+#### 3. パレート分布によるフィット ##############################################
+# ここでは「焼失面積が threshold m^2 を超えたらパレート分布に従う」という
+# 過程で閾値以上のデータに対してパラメータを推定します。
+
+# (1) 閾値設定（例: 3000 m^2）
+threshold <- 3000
+
+# (2) 閾値以上のデータ抽出
+obs_area_th <- obs_area[obs_area > threshold]
+
+# (3) パレート分布のパラメータ推定
+#     actuarパッケージの mde() や fitdist() などを使う例。
+#     ここでは mde() + ppareto() (CDF) を利用し、最小距離推定(CvM)で推定。
+mle_pareto <- mde(
+  obs_area_th,
+  ppareto,                            # パレート分布の累積分布関数
+  start = list(shape = 1, scale = threshold),  # 初期値
+  lower = c(1e-4, threshold),
+  measure = "CvM"                     # 距離指標(例: CvM= Cramér-von Mises)
+)
+
+cat("パレート分布の推定結果（mde）:\n")
+print(mle_pareto)
+
+# (4) 推定パラメータの取り出し
+#     fitdist() 等で推定した場合と取り出し方が異なる点に注意
+#     mde() 結果がどう格納されるかは実行結果を確認し、適宜変更してください
+#     下記は例として書いています（要調整の可能性あり）。
+shape_hat <- mle_pareto$estimate["shape"]
+scale_hat <- mle_pareto$estimate["scale"]
+
+cat("\nパレート分布 shapeパラメータ :", shape_hat,
+    "\nパレート分布 scaleパラメータ :", scale_hat, "\n\n")
+
+# (5) 年間発生率 λ の仮定
+#     例: 「1万m^2クラスが年1回起きる」として λ=1 とする場合など
+lambda <- 1
+
+# (6) ロスカーブの描画用データ作成
+#     - 焼失面積 A_seq
+#     - 超過確率 P(X > A)
+#     - 年間超過頻度 = λ * P(X > A)
+#     - 損害額 Loss_seq = A_seq * damage_per_m2
+A_seq <- seq(from = threshold, to = 50000, length.out = 100)
+
+# パレート分布(閾値=threshold, shape=shape_hat, scale=scale_hat)の超過確率
+# Survival function S(A) = (scale / A)^shape  (for A >= scale)
+# ただし scale >= threshold のはずなので、 A >= threshold で考える。
+SF_pareto <- (scale_hat / A_seq)^shape_hat
+
+# 年間超過頻度
+annual_freq_pareto <- lambda * SF_pareto
+
+# 損害額
+Loss_seq_pareto <- A_seq * damage_per_m2
+
+# (7) ロスカーブプロット
+plot(Loss_seq_pareto, annual_freq_pareto, 
+     log = "y",  # 縦軸を対数スケールで描画
+     type = "l", 
+     xlab = "Loss (円)", 
+     ylab = "Annual Frequency (Exceedance)",
+     main = "Pareto Loss Curve (threshold=3000m^2)")
+grid()
+
+#### 4. 一般化パレート分布(GPD)によるフィット ####################################
+# (1) 閾値設定（例: 3000 m^2）
+threshold_gpd <- 3000
+
+# (2) 閾値以上のデータ抽出
+obs_area_gpd <- obs_area[obs_area > threshold_gpd]
+
+# (3) evirパッケージの gpd() 関数でフィット
+fit_gpd <- gpd(obs_area_gpd, threshold = threshold_gpd)
+
+cat("\nGPDの推定結果:\n")
+print(summary(fit_gpd))
+
+# (4) 推定パラメータの取り出し
+xi_hat   <- fit_gpd$par.ests["xi"]    # shape param
+beta_hat <- fit_gpd$par.ests["beta"]  # scale param (スケール)
+
+cat("\nGPD shape (xi) :", xi_hat,
+    "\nGPD scale (beta):", beta_hat, "\n\n")
+
+# (5) 全体の年間火災頻度 λ と「閾値以上になる確率 P(X > threshold_gpd)」の推定
+#     - ポイントオーバー閾値( PoT ) アプローチ
+#     - ここでは簡単のため観測データ数に基づく割合で P(X > u) を決めるか、
+#       もしくは「年間火災のうち何件が 3000m^2 以上燃えるか」を別途推定する。
+#     - ここでは仮に全火災が年1件で、そのうち 3000m^2 を超える確率を
+#       過去観測データの単純割合で評価する例：
+lambda <- 1
+p_u <- length(obs_area_gpd) / length(obs_area)  # = 閾値超え割合
+
+cat("P(X > 3000m^2) の推定 :", p_u, "\n")
+
+# (6) GPDのサバイバル関数（X>u 部分）を自前計算する関数
+gpd_survival <- function(x, xi, beta, u) {
+  # x >= u のみ想定。xi=0のときは指数分布(特例)。
+  if (x < u) return(1)  # 安全策
+  if (xi != 0) {
+    return( (1 + (xi / beta) * (x - u)) ^ (-1/xi) )
+  } else {
+    return( exp(-(x - u) / beta) )
+  }
+}
+
+# (7) ロスカーブ描画用の x_seq 作成
+x_seq <- seq(from = threshold_gpd, to = 50000, length.out = 100)
+
+# 超過確率 P(X > x) = P(X > u) * P(X > x | X > u)
+# 年間超過頻度 = λ * [上記確率]
+SF_gpd <- sapply(x_seq, function(x) {
+  p_u * gpd_survival(x, xi_hat, beta_hat, threshold_gpd)
+})
+annual_freq_gpd <- lambda * SF_gpd
+
+# 損害額
+Loss_seq_gpd <- x_seq * damage_per_m2
+
+# (8) プロット
+plot(Loss_seq_gpd, annual_freq_gpd,
+     log = "y", type = "l",
+     xlab = "Loss (円)",
+     ylab = "Annual Frequency (Exceedance)",
+     main = "GPD-based Loss Curve (threshold=3000m^2)")
+grid()
+
+###############################################################################
+# 以上
+###############################################################################
