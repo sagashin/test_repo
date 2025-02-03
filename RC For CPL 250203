@@ -1,0 +1,220 @@
+# --- 必要なパッケージの読み込み ---
+# 下記パッケージがインストールされていない場合は、install.packages()でインストールしてください
+library(ggplot2)        # リスクカーブ描画用
+library(evir)           # GPDフィッティング・MEPプロット用
+library(fitdistrplus)   # 分布フィッティングと診断プロット用
+library(dplyr)          # データ整形用（任意）
+
+# ===============================
+# 1. 保険で補償される倉庫火災の市場ロスデータの読み込み
+# ===============================
+# ※ここでは CSV ファイル "market_loss_data.csv" の "loss" 列にロス額（円）が入っている前提です
+market_data <- read.csv("market_loss_data.csv")
+loss_market <- market_data$loss
+
+# ===============================
+# 2. 一般化パレート分布（GPD）フィッティングのための閾値探索（MEPプロット）
+# ===============================
+# MEPプロット（Mean Excess Plot）を作成
+# ※各閾値 u に対し、超過分の平均 excess = mean(loss - u | loss > u) を計算
+u_seq <- sort(loss_market)
+me_values <- sapply(u_seq, function(u) {
+  exceed <- loss_market[loss_market > u]
+  if(length(exceed) > 5) {  # サンプル数が少ないところは除外
+    mean(exceed - u)
+  } else {
+    NA
+  }
+})
+
+plot(u_seq, me_values, type = "l", 
+     main = "MEPプロット（市場ロスデータ）",
+     xlab = "閾値 u", ylab = "平均超過額")
+# ※プロットの「直線的な部分」が閾値候補となります。
+# ＊補足：閾値選定にはパラメータ安定性プロットや分位点プロットなども検討できます。
+
+# ここでは例として95パーセンタイルを閾値とします（実際はMEPプロット等で判断）
+u_market <- quantile(loss_market, 0.95)
+
+# ===============================
+# 3. 閾値 u_market を用いて市場ロスデータの大口部分をGPDでモデリング
+# ===============================
+gpd_fit_market <- gpd(loss_market, threshold = u_market)
+# フィッティング結果は、gpd_fit_market$par.ests に (sigma, xi) が入っています
+
+# ===============================
+# 4. モデリングの検定（診断）
+# ===============================
+# evir::gpd() の出力には、プロット関数が用意されています
+par(mfrow=c(2,2))
+plot(gpd_fit_market)  # QQプロット、パラメータ安定性プロットなど複数の診断図が表示されます
+par(mfrow=c(1,1))
+
+# ※その他、Kolmogorov-Smirnov検定なども検討可能ですが、サンプルサイズや依存性の点に注意
+
+# ===============================
+# 5. ロスの再現期間計算にマーケットシェアを導入
+# ===============================
+# 市場全体での大口事故発生頻度（年間平均）を計算
+# ※ここでは市場データの観測期間を T_market 年と仮定（適宜修正）
+T_market <- 10  # 例：10年分のデータ
+n_exceed_market <- sum(loss_market > u_market)
+lambda_market <- n_exceed_market / T_market
+
+# 自社のマーケットシェア（例：5%）
+market_share <- 0.05
+lambda_effective <- lambda_market * market_share
+
+# GPDによる尾部モデルでは、全体の超過確率 p_u も必要です
+p_u_market <- n_exceed_market / length(loss_market)
+
+# リスクカーブを計算するため、以下の理論式を用います：
+# 年間ロス発生頻度（自社）は λ_effective × p_u_market × [1 + ξ*(x - u)/σ]^(-1/ξ)
+# 返戻期間 RP = 1 / (年間ロス発生頻度) となるので、
+#  [1 + ξ*(x - u)/σ] = (lambda_effective * p_u_market * RP)^ξ    (ξ ≠ 0)
+# よって、x = u + (σ/ξ)*((lambda_effective * p_u_market * RP)^ξ - 1)
+# ※ξ = 0 の場合は、対数変換を用います
+
+quantile_market <- function(RP, u, sigma, xi, lambda_eff, p_u) {
+  annual_rate <- lambda_eff * p_u  # 年間の大口事故発生頻度（自社）
+  if (abs(xi) > 1e-6) {
+    return(u + (sigma/xi)*((annual_rate * RP)^xi - 1))
+  } else {
+    return(u + sigma * log(annual_rate * RP))
+  }
+}
+
+# 返戻期間の系列を設定（例：1年～500年）
+RP_market <- seq(1, 500, length.out = 100)
+sigma_market <- gpd_fit_market$par.ests["sigma"]
+xi_market    <- gpd_fit_market$par.ests["xi"]
+
+risk_curve_market <- data.frame(
+  ReturnPeriod = RP_market,
+  Loss = sapply(RP_market, quantile_market, u = u_market, sigma = sigma_market,
+                xi = xi_market, lambda_eff = lambda_effective, p_u = p_u_market)
+)
+
+# ===============================
+# 6. GGPLOT2を用いて倉庫火災リスクカーブ（市場ロス）の描画
+# ===============================
+p_market <- ggplot(risk_curve_market, aes(x = ReturnPeriod, y = Loss/1e6)) +
+  geom_line(color = "blue", size = 1) +
+  labs(title = "倉庫火災リスクカーブ（市場ロスデータ）",
+       x = "再現期間 (年)",
+       y = "損害額（百万円）") +
+  theme_minimal()
+print(p_market)
+
+# ===============================
+# 7. 当社の実績ロスデータの読み込み
+# ===============================
+# ※ここでは CSV ファイル "actual_loss_data.csv" の "loss" 列にロス額（円）が入っている前提です
+actual_data <- read.csv("actual_loss_data.csv")
+loss_actual <- actual_data$loss
+
+# ===============================
+# 8. 実績ロスデータの閾値探索（MEPプロット）
+# ===============================
+u_seq_actual <- sort(loss_actual)
+me_values_actual <- sapply(u_seq_actual, function(u) {
+  exceed <- loss_actual[loss_actual > u]
+  if(length(exceed) > 5) {
+    mean(exceed - u)
+  } else {
+    NA
+  }
+})
+
+plot(u_seq_actual, me_values_actual, type = "l", 
+     main = "MEPプロット（実績ロスデータ）",
+     xlab = "閾値 u", ylab = "平均超過額")
+# ※プロットから直線的な部分を確認してください
+
+# 例として95パーセンタイルを閾値とします
+u_actual <- quantile(loss_actual, 0.95)
+
+# ===============================
+# 9. 閾値 u_actual 以降の実績ロスデータに対して対数正規分布フィッティング
+# ===============================
+loss_actual_excess <- loss_actual[loss_actual > u_actual]
+
+# 対数正規分布フィッティング（fitdistrplus パッケージを利用）
+fit_lnorm_actual <- fitdist(loss_actual_excess, "lnorm")
+print(fit_lnorm_actual)
+
+# ===============================
+# 10. フィッティング検定（QQプロット等）
+# ===============================
+# QQプロット（fitdistrplus::qqcomp() を使用）
+qqcomp(fit_lnorm_actual, main = "実績ロスデータ（対数正規分布フィッティング） QQプロット")
+# 他にも density plot, CDFプロットなども自動で描画可能
+plot(fit_lnorm_actual)
+
+# ===============================
+# 11. 実績ロスのシナリオとのブレンドモデル
+#     ※「倉庫火災の200年に一度のPML（マーケットシェア考慮せず）」をシナリオとして導入
+# ===============================
+# ※シナリオ値は外部判断により与えられる（例：500百万円＝5e8円）
+scenario_PML <- 500e6  # 単位：円 ※適宜設定してください
+
+# ブレンドモデルとして、実績ロスの大口部分とシナリオ値を併せたデータで対数正規分布フィッティング
+loss_blend <- c(loss_actual_excess, scenario_PML)
+fit_lnorm_blend <- fitdist(loss_blend, "lnorm")
+print(fit_lnorm_blend)
+
+# ===============================
+# 12. ブレンドモデルに基づくリスクカーブの描画
+#     横軸：再現期間、縦軸：損害額（百万円単位）
+# ===============================
+# 対数正規分布の場合、分位点は qlnorm() を用いて計算します。
+# ここでは、実績ロスの観測期間から、年間大口発生頻度 lambda_actual を推定します
+T_actual <- 10  # 例：実績データ期間（年）、適宜変更
+n_exceed_actual <- length(loss_actual_excess)
+lambda_actual <- n_exceed_actual / T_actual
+
+# ※マーケットシェアは考慮しないので、全体の頻度を使用
+# 年間超過確率（対数正規分布フィッティングによる）: F(x) = plnorm(x, meanlog, sdlog)
+# 年間発生頻度（x超過） = lambda_actual * (1 - F(x)) → 再現期間 RP = 1 / (lambda_actual*(1 - F(x)))
+# 逆に、与えられた RP に対して x を求めるには、1 - F(x) = 1/(lambda_actual * RP)
+# すなわち、x = qlnorm( F(x) ), F(x) = 1 - 1/(lambda_actual * RP)
+mu_blend <- fit_lnorm_blend$estimate["meanlog"]
+sigma_blend <- fit_lnorm_blend$estimate["sdlog"]
+
+quantile_blend <- function(RP, lambda_actual, mu, sigma) {
+  # 確率が 0～1 の範囲にあることを確認
+  p <- 1 - 1/(lambda_actual * RP)
+  p[p < 0] <- 0  # RP が小さい場合の補正
+  return(qlnorm(p, meanlog = mu, sdlog = sigma))
+}
+
+RP_blend <- seq(1, 500, length.out = 100)
+risk_curve_blend <- data.frame(
+  ReturnPeriod = RP_blend,
+  Loss = quantile_blend(RP_blend, lambda_actual, mu_blend, sigma_blend)
+)
+
+p_blend <- ggplot(risk_curve_blend, aes(x = ReturnPeriod, y = Loss/1e6)) +
+  geom_line(color = "red", size = 1) +
+  labs(title = "倉庫火災リスクカーブ（実績ロス + シナリオ ブレンド）",
+       x = "再現期間 (年)",
+       y = "損害額（百万円）") +
+  theme_minimal()
+print(p_blend)
+
+# ===============================
+# 13. ブレンドモデルに基づく計算
+#     (a) 200年に一度のPML（損害額）を算出
+#     (b) 損害額が10億円の場合の再現期間を計算
+# ===============================
+# (a) 200年に一度のPML
+RP_target <- 200
+PML_200 <- quantile_blend(RP_target, lambda_actual, mu_blend, sigma_blend)
+cat("【ブレンドモデル】200年に一度のPML:", PML_200/1e6, "百万円\n")
+
+# (b) 損害額 10億円 = 1e9 円の場合の再現期間
+loss_target <- 1e9
+# 対数正規分布のCDF: F(x) = plnorm(x, meanlog, sdlog)
+# 年間発生頻度 = lambda_actual*(1 - F(x)) → RP = 1 / (lambda_actual*(1 - F(x)))
+RP_for_target <- 1/(lambda_actual*(1 - plnorm(loss_target, meanlog = mu_blend, sdlog = sigma_blend)))
+cat("【ブレンドモデル】損害額 10億円 の再現期間:", RP_for_target, "年\n")
