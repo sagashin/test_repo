@@ -1,4 +1,222 @@
 # --- 必要なパッケージの読み込み ---
+library(ggplot2)      # プロット用
+library(evir)         # GPDフィッティング用
+library(fitdistrplus) # 分布フィッティング・診断用
+library(dplyr)        # データ整形用
+library(tidyr)        # データ整形用
+library(gridExtra)    # 複数プロットの配置用（必要に応じて）
+
+# ===============================
+# 共通パラメータの設定
+# ===============================
+market_share <- 0.05   # 自社マーケットシェア（例：5%）
+T_market     <- 10     # Market Loss データの観測期間（年）
+T_actual     <- 10     # 実績ロスデータの観測期間（年）
+
+# ===============================
+# 1. データの読み込み
+# ===============================
+# Market Loss データ：各レコードに "loss1", "loss2", "loss3", "Category", "焼損床面積" などの列がある前提
+market_data <- read.csv("market_loss_data.csv")
+# 実績ロスデータ（例：loss 列がある前提）
+actual_data <- read.csv("actual_loss_data.csv")
+loss_actual <- actual_data$loss
+
+# ===============================
+# 2. 実績ロスデータの対数正規分布フィッティング（１パターン）
+# ===============================
+# ※ここでは、実績データは95パーセンタイルを閾値として閾値超過部分を抽出
+u_actual <- quantile(loss_actual, 0.95)
+loss_actual_excess <- loss_actual[loss_actual > u_actual]
+n_exceed_actual <- length(loss_actual_excess)
+lambda_actual <- n_exceed_actual / T_actual
+
+# ===============================
+# 3. Market Loss の条件設定
+# ===============================
+# Market Loss のパターンは3列：loss1, loss2, loss3
+market_patterns <- c("loss1", "loss2", "loss3")
+# Category：全件 ("All") と "倉庫" のみ
+category_filters <- c("All", "倉庫")
+# 焼損床面積：全件 ("All") と 10000㎡以上 (">=10000")
+floorarea_filters <- c("All", ">=10000")
+
+# すべての組み合わせ（3 × 2 × 2 = 12通り）
+combos <- expand.grid(Pattern = market_patterns,
+                      CategoryFilter = category_filters,
+                      FloorAreaFilter = floorarea_filters,
+                      stringsAsFactors = FALSE)
+
+# ===============================
+# 4. 関数の定義
+# ===============================
+# (a) Market Loss モデル：与えられた再現期間 RP に対する損害額を算出（GPD の理論式）
+quantile_market <- function(RP, u, beta, xi, annual_rate) {
+  if (abs(xi) > 1e-6) {
+    return(u + (beta/xi) * ((annual_rate * RP)^xi - 1))
+  } else {
+    return(u + beta * log(annual_rate * RP))
+  }
+}
+
+# (b) 逆関数：ある損害額 x に対して再現期間 RP を求める（Market Loss モデル）
+inverse_quantile_market <- function(x, u, beta, xi, annual_rate) {
+  if (abs(xi) > 1e-6) {
+    RP <- (1/annual_rate) * (1 + xi*(x - u)/beta)^(1/xi)
+  } else {
+    RP <- exp((x - u)/beta) / annual_rate
+  }
+  return(RP)
+}
+
+# (c) ブレンドモデル（実績ロス + Market 側シナリオ）の対数正規分布によるリスク曲線
+quantile_blend <- function(RP, lambda_actual, meanlog, sdlog) {
+  p <- 1 - 1/(lambda_actual * RP)
+  p[p < 0] <- 0  # RP が小さい場合の補正
+  return(qlnorm(p, meanlog = meanlog, sdlog = sdlog))
+}
+
+# ===============================
+# 5. 各条件ごとのモデリング・リスクカーブ作成
+# ===============================
+# 結果をまとめるテーブルおよびリスクカーブプロット用データを保存するリスト
+results_list    <- list()
+risk_curve_list <- list()
+
+# 各組み合わせについてループ
+for(i in 1:nrow(combos)) {
+  combo <- combos[i, ]
+  
+  # --- Market Loss データのフィルタリング ---
+  # パターンは列名（loss1, loss2, loss3）として扱うので、まずは全件のデータを利用
+  subset_data <- market_data
+  
+  # Category フィルタ
+  if(combo$CategoryFilter == "倉庫") {
+    subset_data <- subset_data %>% filter(Category == "倉庫")
+  }
+  # 焼損床面積フィルタ
+  if(combo$FloorAreaFilter == ">=10000") {
+    subset_data <- subset_data %>% filter(`焼損床面積` >= 10000)
+  }
+  
+  # 対象となる Market Loss 列（文字列で指定："loss1" など）
+  loss_col <- combo$Pattern
+  
+  # 該当列のデータを抽出し、NA を除外
+  loss_subset <- subset_data[[ loss_col ]]
+  loss_subset <- loss_subset[!is.na(loss_subset)]
+  
+  # 十分な件数がない場合はスキップ（例：30件未満なら解析不可とする）
+  if(length(loss_subset) < 30) {
+    next
+  }
+  
+  # --- GPD フィッティング ---
+  # 閾値は 95 パーセンタイル（実際は MEPプロットなどで確認することを推奨）
+  u_market <- quantile(loss_subset, 0.95)
+  gpd_fit <- gpd(loss_subset, threshold = u_market)
+  
+  # ※ evir::gpd() の出力では、スケールパラメータが "beta"、形状パラメータが "xi" として出力される前提
+  beta <- gpd_fit$par.ests["beta"]
+  xi   <- gpd_fit$par.ests["xi"]
+  
+  # --- 発生頻度の計算 ---
+  n_exceed <- sum(loss_subset > u_market)
+  lambda_market <- n_exceed / T_market
+  # 自社での発生頻度（市場全体頻度にマーケットシェアを乗じる）
+  lambda_effective <- lambda_market * market_share
+  # 閾値超過確率（該当件数／全件数）
+  p_u <- n_exceed / length(loss_subset)
+  # 年間の大口事故発生頻度（Market モデル側）
+  annual_rate <- lambda_effective * p_u
+  
+  # --- Market リスクカーブの作成 ---
+  RP_seq <- seq(1, 500, length.out = 100)
+  market_risk <- sapply(RP_seq, quantile_market, u = u_market, beta = beta, xi = xi, annual_rate = annual_rate)
+  market_curve_df <- data.frame(ReturnPeriod = RP_seq, Loss = market_risk,
+                                Model = "Market",
+                                Pattern = combo$Pattern,
+                                CategoryFilter = combo$CategoryFilter,
+                                FloorAreaFilter = combo$FloorAreaFilter)
+  
+  # --- Market モデル側：最大ロスとその再現期間 ---
+  max_loss    <- max(loss_subset)
+  max_loss_RP <- inverse_quantile_market(max_loss, u_market, beta, xi, annual_rate)
+  
+  # --- Market モデルから 200 年に一度の PML（シナリオ値）を算出 ---
+  scenario_PML <- quantile_market(200, u_market, beta, xi, annual_rate)
+  
+  # --- ブレンド（実績ロスと Market 側シナリオ値の組み合わせ） ---
+  blend_data <- c(loss_actual_excess, scenario_PML)
+  fit_blend <- fitdist(blend_data, "lnorm")
+  meanlog_blend <- fit_blend$estimate["meanlog"]
+  sdlog_blend   <- fit_blend$estimate["sdlog"]
+  
+  # --- ブレンドモデルによるリスクカーブ作成 ---
+  blend_risk <- sapply(RP_seq, quantile_blend, lambda_actual = lambda_actual,
+                       meanlog = meanlog_blend, sdlog = sdlog_blend)
+  blend_curve_df <- data.frame(ReturnPeriod = RP_seq, Loss = blend_risk,
+                               Model = "Blend",
+                               Pattern = combo$Pattern,
+                               CategoryFilter = combo$CategoryFilter,
+                               FloorAreaFilter = combo$FloorAreaFilter)
+  
+  # ブレンドモデルにおける 200 年再現期間の損害額
+  blend_risk_200 <- quantile_blend(200, lambda_actual, meanlog_blend, sdlog_blend)
+  
+  # --- 結果の保存（1行分のテーブル） ---
+  result_row <- data.frame(
+    Pattern = combo$Pattern,
+    CategoryFilter = combo$CategoryFilter,
+    FloorAreaFilter = combo$FloorAreaFilter,
+    BlendRisk200 = blend_risk_200,
+    MarketMaxLoss = max_loss,
+    MarketMaxLossRP = max_loss_RP
+  )
+  results_list[[length(results_list) + 1]] <- result_row
+  
+  # --- リスクカーブのデータをリストへ保存 ---
+  risk_curve_list[[length(risk_curve_list) + 1]] <- market_curve_df
+  risk_curve_list[[length(risk_curve_list) + 1]] <- blend_curve_df
+}
+
+# ===============================
+# 6. 結果のテーブル作成
+# ===============================
+if(length(results_list) > 0) {
+  summary_table <- do.call(rbind, results_list)
+  cat("---- 組み合わせ別のサマリーテーブル ----\n")
+  print(summary_table)
+} else {
+  cat("十分なデータが得られた組み合わせがありません。\n")
+}
+
+# ===============================
+# 7. リスクカーブのプロット作成（ggplot2）
+# ===============================
+if(length(risk_curve_list) > 0) {
+  risk_curve_all <- do.call(rbind, risk_curve_list)
+  
+  # faceting により、Pattern を行、CategoryFilter と FloorAreaFilter を列に表示
+  risk_curve_plot <- ggplot(risk_curve_all, 
+                            aes(x = ReturnPeriod, y = Loss/1e6, color = Model, linetype = Model)) +
+    geom_line(size = 1) +
+    facet_grid(Pattern ~ CategoryFilter + FloorAreaFilter, labeller = label_both) +
+    labs(title = "リスクカーブ（Market と Blend）",
+         x = "再現期間 (年)",
+         y = "損害額（百万円）") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  print(risk_curve_plot)
+} else {
+  cat("リスクカーブデータがありません。\n")
+}
+
+##################################
+
+# --- 必要なパッケージの読み込み ---
 # 下記パッケージがインストールされていない場合は、install.packages()でインストールしてください
 library(ggplot2)        # リスクカーブ描画用
 library(evir)           # GPDフィッティング・MEPプロット用
