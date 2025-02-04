@@ -1,0 +1,61 @@
+# 必要なパッケージの読み込み
+library(fitdistrplus)  # 分布フィッティング用
+library(MASS)          # 場合によっては fitdistr() を使用
+
+# 1. 実績ロスデータの読み込みと対数正規分布フィッティング -------------------
+
+# ※会社データの CSV ファイル (例："company_loss_data.csv") は、ロス金額が "loss" カラムにあると仮定
+company_data <- read.csv("company_loss_data.csv")
+loss_data <- company_data$loss
+
+# 対数正規分布でフィッティング
+fit_orig <- fitdist(loss_data, "lnorm")
+cat("【実績データフィッティング結果】\n")
+print(summary(fit_orig))
+# フィッティング結果より、meanlog と sdlog の推定値が得られる
+
+# 2. シナリオ（極端値）を入れたシミュレーション -----------------------------------
+
+set.seed(123)  # 再現性のため
+N <- 10000     # シミュレーション回数
+
+# シナリオのパラメータ設定
+p_scenario <- 0.01  # シナリオ（市場最大ロス）の発生確率（例：1%）
+max_loss   <- 1e7   # シナリオで発生するロスの値（例：1,000万円）
+
+# (a) 元の対数正規分布に従いシミュレーション
+sim_losses <- rlnorm(N, meanlog = fit_orig$estimate["meanlog"],
+                          sdlog   = fit_orig$estimate["sdlog"])
+
+# (b) 一定の確率でシナリオ（極端値）に差し替え
+is_scenario <- runif(N) < p_scenario  # TRUE の箇所がシナリオ発生
+sim_losses[is_scenario] <- max_loss
+
+# 3. シナリオ入りロスデータに対して再度対数正規分布でフィッティング ----------------
+
+fit_scenario <- fitdist(sim_losses, "lnorm")
+cat("\n【シナリオ入りデータフィッティング結果】\n")
+print(summary(fit_scenario))
+
+# ※注意：シナリオ（極端値）が混ざることでフィッティング結果は、実績データのみのフィッティング結果とは異なります。
+
+# 4. リスクカーブ（エクシーデンスカーブ）の作成 -------------------------------------
+
+# 方法①：シミュレーション結果の降順ソートによる単純なリスクカーブ
+sorted_losses <- sort(sim_losses, decreasing = TRUE)
+exceedance_prob <- (1:length(sorted_losses)) / N
+
+# プロット（x軸を対数表示）
+plot(sorted_losses, exceedance_prob, type = "l", log = "x",
+     xlab = "ロス金額", ylab = "エクシーデンス確率",
+     main = "シナリオ入りリスクカーブ（実測・シミュレーション）", col = "blue")
+
+# 方法②：フィッティング結果（シナリオ入り）による理論リスクカーブの重ね描き
+# 例として、p（超過確率）に対応するロスの理論的分位点を算出
+p_seq <- seq(0.0001, 0.9999, length.out = 1000)
+# 超過確率が p の場合、分位点は qlnorm(1-p, ...) で算出
+theoretical_losses <- qlnorm(1 - p_seq, meanlog = fit_scenario$estimate["meanlog"],
+                                           sdlog   = fit_scenario$estimate["sdlog"])
+lines(theoretical_losses, p_seq, col = "red", lwd = 2)
+legend("topright", legend = c("シミュレーション実績", "フィッティング分布"),
+       col = c("blue", "red"), lwd = c(1,2))
