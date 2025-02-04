@@ -1,0 +1,58 @@
+# --- 0. ライブラリの読み込み（必要に応じて） ---
+# 特に追加のパッケージは必要ありませんが、後でデータの整形等に dplyr を利用する場合は読み込みます
+# library(dplyr)
+
+# --- 1. シミュレーション設定とロスの生成 ---
+set.seed(123)       # 再現性のため
+N <- 10000          # シミュレーション回数（例：10000サンプル）
+
+# シナリオ設定
+p_scenario <- 0.01  # シナリオ（市場最大ロス）が発生する確率（例：1%）
+max_loss   <- 1e7   # 市場最大ロスの金額（例：1,000万円）
+
+# 通常時のロスは対数正規分布で生成（パラメータは例）
+meanlog <- 10
+sdlog   <- 2
+
+# (a) 対数正規分布によりロスを生成
+sim_losses <- rlnorm(N, meanlog = meanlog, sdlog = sdlog)
+
+# (b) 一定確率でシナリオ（極端値）に置換
+is_scenario <- runif(N) < p_scenario
+sim_losses[is_scenario] <- max_loss
+
+# --- 2. リスクカーブ用テーブルの作成 ---
+# ロスを降順にソート
+sorted_losses <- sort(sim_losses, decreasing = TRUE)
+
+# 各順位（1番目～N番目）の超過確率と再現期間を計算
+# ※ 超過確率は、順位 / N、再現期間は 1/超過確率 = N/順位 とします。
+rank <- 1:N
+exceed_prob <- rank / N
+return_period <- N / rank
+
+# テーブルとしてまとめる
+risk_table <- data.frame(
+  Rank = rank,
+  Loss = sorted_losses,
+  Exceedance_Probability = exceed_prob,
+  Return_Period = return_period
+)
+
+# テーブルの先頭部分を表示（必要に応じて表示行数を調整）
+head(risk_table, 20)
+
+# --- 3. リスクカーブのプロット ---
+# 横軸：再現期間、縦軸：ロス
+# 横軸を対数表示にして、広いレンジの再現期間が見やすくなるようにします
+plot(risk_table$Return_Period, risk_table$Loss, type = "l", log = "x",
+     xlab = "再現期間 (Return Period)",
+     ylab = "ロス金額 (Loss)",
+     main = "ロスのリスクカーブ",
+     col = "blue", lwd = 2)
+grid()  # グリッド線を追加
+
+# --- 4. テーブルの出力例 ---
+# 以下は、テーブルの一部を表示する例です
+print("リスクカーブテーブル（先頭20件）:")
+print(head(risk_table, 20))
