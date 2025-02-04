@@ -1,0 +1,55 @@
+# 必要なライブラリの読み込み
+library(ggplot2)
+library(scales)
+
+# 1. サンプルデータの生成（実際のデータがある場合はloss_dataに置き換えてください）
+set.seed(123)
+n <- 500
+# 例として、真の対数正規分布パラメータを設定（例：中央値約1,000,000）
+mu_true <- log(1e6)      # 約13.8155
+sigma_true <- 0.7
+loss_data <- rlnorm(n, meanlog = mu_true, sdlog = sigma_true)
+
+# 2. データから対数をとって、パラメータを推定
+log_loss <- log(loss_data)
+mu_est <- mean(log_loss)
+sigma_est <- sd(log_loss)
+
+cat("【データからの推定結果】\n")
+cat("μ =", mu_est, "\n")
+cat("σ =", sigma_est, "\n\n")
+
+# 3. 市場データ（50年に一度の損害額）を反映するための補正
+# 市場が示す50年に一度の損害額（例：5,000,000）
+market50 <- 5e6
+T_market <- 50
+
+# 対数正規分布の分位点関数は Q(T) = exp(μ + σ · qnorm(1 - 1/T))
+# T = 50 で Q(50) = market50 となるように、補正後の μ を計算
+mu_adjusted <- log(market50) - sigma_est * qnorm(1 - 1/T_market)
+cat("【補正後のパラメータ】\n")
+cat("補正後のμ =", mu_adjusted, "\n")
+cat("（σはデータからのσ =", sigma_est, "をそのまま使用）\n\n")
+
+# 4. リスクカーブの作成
+# 任意のリターン・ペリオド T に対して、対数正規分布の分位点は:
+# Q(T) = exp(μ_adjusted + σ_est * qnorm(1 - 1/T))
+quantile_function <- function(T) {
+  exp(mu_adjusted + sigma_est * qnorm(1 - 1/T))
+}
+
+# 例として、リターン・ペリオド1年～500年で分位点を計算
+T_values <- seq(1, 500, length.out = 100)
+Q_values <- quantile_function(T_values)
+df <- data.frame(ReturnPeriod = T_values, LossQuantile = Q_values)
+
+# 5. リスクカーブのプロット
+ggplot(df, aes(x = ReturnPeriod, y = LossQuantile)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(aes(x = T_market, y = market50), color = "red", size = 3) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "【リスクカーブ】対数正規分布によるリスクカーブ",
+       subtitle = "赤い点：市場提示の50年に一度の損害額",
+       x = "リターン・ペリオド（年）",
+       y = "損害額") +
+  theme_minimal()
