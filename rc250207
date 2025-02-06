@@ -1,0 +1,163 @@
+# --- 必要なパッケージの読み込み ---
+library(fitdistrplus)  # ボディ部分のフィッティング用
+library(evir)          # GPDフィッティング用
+
+# --- 事前データの準備 ---
+# loss_data: 全体データ（実データを使用してください）
+# ここではダミーデータ例として（実際はユーザー提供のデータを用いる）
+#set.seed(123)
+#loss_data <- c(rlnorm(1000, meanlog = 10, sdlog = 0.5), rlnorm(100, meanlog = 12, sdlog = 0.7))
+
+# body_data: loss_data のうち、x <= u_candidate（ここでは u_candidate は事前に決めた値）
+# tail_data: 別データとして、テール部分のデータ（x > u と仮定）
+# ※ ここでは、tail_data は loss_data のうち u_candidate より大きい部分を抽出する例です
+u_candidate <- quantile(loss_data, 0.95)
+body_data <- loss_data[loss_data <= u_candidate]
+tail_data <- loss_data[loss_data > u_candidate]
+
+# --- 1. ボディ部分のフィッティング（対数正規分布） ---
+fit_body <- fitdist(body_data, "lnorm")
+meanlog_body <- fit_body$estimate["meanlog"]
+sdlog_body   <- fit_body$estimate["sdlog"]
+
+# --- 2. テール部分のフィッティング（GPD） ---
+# ここで、閾値 u を tail_data の最小値とする
+u <- min(tail_data)
+gpd_fit <- gpd(tail_data, threshold = u)  # evirパッケージのgpd()を使用
+beta <- as.numeric(gpd_fit$par.ests["beta"])
+xi   <- as.numeric(gpd_fit$par.ests["xi"])
+
+# --- 3. 全体の年間発生頻度の計算 ---
+# 観測期間（年）を T_obs とする
+T_obs <- 10
+lambda_total <- length(loss_data) / T_obs
+
+# --- 4. ボディ部分のCDF ---
+F_body <- function(x) {
+  plnorm(x, meanlog = meanlog_body, sdlog = sdlog_body)
+}
+F_body_u <- F_body(u)  # ボディCDFでの閾値uの値
+
+# --- 5. ブレンディング閾値（最小の再現期間 T0） ---
+T0 <- 1 / (lambda_total * (1 - F_body_u))
+cat("Blending threshold (T0) =", T0, "years\n")
+
+# --- 6. 逆関数定義 ---
+# (a) ボディ部分の逆関数 (T < T0)
+Q_body <- function(T) {
+  # 与えられた T に対して全体の累積確率は 1 - 1/(lambda_total * T)
+  p <- 1 - 1/(lambda_total * T)
+  qlnorm(p, meanlog = meanlog_body, sdlog = sdlog_body)
+}
+
+# (b) テール部分の逆関数 (T >= T0)
+# 導出：全体CDF F(x) = F_body(u) + (1 - F_body(u)) * F_tail(x - u)
+# で 1 - F(x) = 1/(lambda_total * T)
+# GPDのCDF: F_tail(y) = 1 - (1 + xi*y/beta)^(-1/xi)
+# よって、1 - F_tail(y) = (1 + xi*y/beta)^(-1/xi)
+# 解くと: x = u + (beta/xi)*[((lambda_total * T * (1 - F_body(u)))^(xi)) - 1]
+Q_tail <- function(T) {
+  u + (beta/xi) * ( (lambda_total * T * (1 - F_body_u))^(xi) - 1 )
+}
+
+# (c) ブレンディング逆関数
+Q_blend <- function(T) {
+  if (T < T0) {
+    return(Q_body(T))
+  } else {
+    return(Q_tail(T))
+  }
+}
+Q_blend_vec <- Vectorize(Q_blend)
+
+# --- 7. リスクカーブのプロット ---
+# 再現期間 T の範囲を、例えば1年から1000年まで対数スケールで生成
+T_vals <- exp(seq(log(1), log(1000), length.out = 500))
+loss_vals <- Q_blend_vec(T_vals)
+
+plot(T_vals, loss_vals, type = "l", log = "x", lwd = 2, col = "red",
+     xlab = "Return Period (years)", ylab = "Loss",
+     main = "Blended Risk Curve\n(Body for T < T0, Tail for T >= T0)")
+abline(v = T0, col = "blue", lty = 2)
+text(T0, max(loss_vals), labels = paste("T0 =", round(T0,1), "years"), pos = 4)
+
+# --- 補足 ---
+# このモデルでは、T0が閾値uに対応する最小の再現期間となり、
+# T < T0 の場合はボディモデルの逆関数、T >= T0 の場合はテール（GPD）モデルの逆関数を使用して損害額を求め# VaRを求める関数（ブレンディングモデルの逆関数）
+####
+VaR_blend <- function(alpha) {
+  # 下限はデータの最小値、上限は十分大きい値（例：max(loss_data)*10）とする
+  uniroot(function(x) F_blend_vec(x) - alpha,
+          lower = min(loss_data), upper = max(loss_data)*10)$root
+}
+# TVaRを求める関数（ブレンディングモデル）
+TVaR_blend <- function(alpha) {
+  VaR_val <- VaR_blend(alpha)
+  # x* f_blend(x) の積分（上限はInfで近似）
+  numerator <- integrate(function(x) x * f_blend_vec(x), lower = VaR_val, upper = Inf)$value
+  return(numerator / (1 - alpha))
+}
+# 信頼水準の例
+alpha <- 0.99
+
+# VaRの計算
+VaR_val <- VaR_blend(alpha)
+cat("VaR at alpha =", alpha, ":", VaR_val, "\n")
+
+# TVaRの計算
+TVaR_val <- TVaR_blend(alpha)
+cat("TVaR at alpha =", alpha, ":", TVaR_val, "\n")
+
+# αの値を0から0.9999まで100点で生成
+alphas <- seq(0, 0.9999, length.out = 100)
+
+# TVaRを各αに対して計算（α=0の場合はTVaR = 平均値となるので注意）
+TVaR_values <- sapply(alphas, function(a) {
+  if(a == 0) {
+    # α=0の場合は全体の期待値（平均）を返す
+    return(integrate(function(x) x * f_blend_vec(x), lower = min(loss_data), upper = Inf)$value)
+  } else {
+    return(TVaR_blend(a))
+  }
+})
+
+# プロット
+plot(alphas, TVaR_values, type = "l", col = "blue", lwd = 2,
+     xlab = "Alpha (Confidence Level)", ylab = "TVaR",
+     main = "TVaR vs. Alpha for Blended Distribution")
+
+# サンプルパラメータの設定（実際のデータに合わせて変更してください）
+mu <- 10            # 対数変換後の平均
+sigma <- 0.5        # 対数変換後の標準偏差
+
+# 平均値（期待損失）の計算
+mean_value <- exp(mu + sigma^2/2)
+cat("Mean (Expected Loss) =", mean_value, "\n")
+
+# αの値を 0 から 0.9999（=99.99%）まで1000点で生成
+alphas <- seq(0, 0.9999, length.out = 1000)
+
+# TVaRの計算関数
+# TVaR(α) = (E[X] * Φ(σ - qnorm(α))) / (1 - α)
+TVaR <- function(alpha, mean_value, sigma) {
+  # qnorm(alpha) は α 分位点（標準正規分布）
+  # α = 0の場合は qnorm(0) = -Inf となり、pnorm(Inf)=1 となるため、TVaR(0)=mean_value
+  return( mean_value * pnorm(sigma - qnorm(alpha)) / (1 - alpha) )
+}
+
+# αの各値に対してTVaRを計算（ベクトル化）
+TVaR_values <- sapply(alphas, TVaR, mean_value = mean_value, sigma = sigma)
+
+# TVaRのプロット（αが0〜0.9999の範囲）
+plot(alphas, TVaR_values, type="l", col="blue", lwd=2,
+     xlab="Alpha (Confidence Level)", ylab="TVaR",
+     main="TVaR vs. Alpha for Lognormal Distribution")
+
+# また、α=0の場合のTVaRは期待値と同じになるはずです
+cat("TVaR at alpha = 0:", TVaR(0, mean_value, sigma), "\n")
+cat("TVaR at alpha = 0.9999:", TVaR(0.9999, mean_value, sigma), "\n")
+
+
+
+
+
