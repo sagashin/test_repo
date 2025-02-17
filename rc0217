@@ -1,0 +1,103 @@
+# --- 事前準備 ---
+library(fitdistrplus)  # ボディ分布フィッティング用
+library(evir)          # GPDフィッティング用
+
+# loss_data: 損害額のデータベクトル（実データを用いる）
+# 例としてダミーデータを生成する場合：
+#set.seed(123)
+#loss_data <- c(rlnorm(1000, meanlog = 10, sdlog = 0.5), rlnorm(100, meanlog = 12, sdlog = 0.7))
+
+# 観測期間（年）
+T_obs <- 10  
+lambda_total <- length(loss_data) / T_obs
+
+# 閾値 u を95パーセンタイルで設定
+u <- quantile(loss_data, 0.95)
+
+# --- 1. ボディ部分のフィッティング：対数正規分布（x <= u） ---
+body_data <- loss_data[loss_data <= u]
+fit_body <- fitdist(body_data, "lnorm")  # 推定パラメータ: meanlog, sdlog
+
+# ボディ分布のCDF（対数正規分布）
+F_body <- function(x) {
+  plnorm(x, meanlog = fit_body$estimate["meanlog"], sdlog = fit_body$estimate["sdlog"])
+}
+
+# --- 2. テール部分のフィッティング：GPD（x > u） ---
+# u を超える部分（超過分: y = x - u）
+excess_data <- loss_data[loss_data > u] - u
+gpd_fit <- gpd(loss_data, threshold = u)  # evir::gpd() を使用
+beta <- as.numeric(gpd_fit$par.ests["beta"])
+xi   <- as.numeric(gpd_fit$par.ests["xi"])
+
+# GPDのCDFおよび密度（ここでは逆関数に必要な部分のみ）
+F_tail <- function(y) {
+  if (abs(xi) > 1e-6) {
+    return(1 - (1 + xi * y / beta)^(-1/xi))
+  } else {
+    return(1 - exp(-y / beta))
+  }
+}
+
+# --- 3. ブレンディングモデルの「逆関数（リスクカーブ）」定義 ---
+
+# まず、u に対応するボディ側の累積確率
+p_tail <- 1 - F_body(u)
+# u に対応するリスク（再現期間）：
+T0 <- 1 / (lambda_total * p_tail)
+cat("Blending threshold (T0) =", T0, "years\n")
+
+# (a) ボディ側の損害額の逆関数：
+# 　ボディモデルは x < u で、F_body(x) = 1 - 1/(λ_total * T)
+# よって、与えられたTに対して、
+#    Q_body(T) = qlnorm(1 - 1/(λ_total * T), meanlog, sdlog)
+Q_body <- function(T) {
+  p <- 1 - 1 / (lambda_total * T)
+  qlnorm(p, meanlog = fit_body$estimate["meanlog"], sdlog = fit_body$estimate["sdlog"])
+}
+
+# (b) テール側の損害額の逆関数：
+# 　GPDの分位点は、対数正規のボディ部分で u に対応する確率は F_body(u) なので、
+# 　全体の累積確率は F(x) = F_body(u) + (1 - F_body(u)) * F_tail(x - u)
+# 　与えられたT（T >= T0）に対して、1 - F(x) = 1/(λ_total * T)
+# 　→ F_tail(x - u) = (1/(λ_total * T) - F_body(u)) / (1 - F_body(u))
+# 　これの逆関数（GPDの逆関数）を用いて、
+#    Q_tail(T) = u + (β/ξ) * { [ (1 - F_body(u))/(1/(λ_total * T) - F_body(u)) ]^(-ξ) - 1 }
+# ※ 注意：この式は文献によって表現が異なる場合があるため、ここでは一例として示します。
+Q_tail <- function(T) {
+  # 全体の確率レベル corresponding to return period T
+  p_total <- 1 - 1/(lambda_total * T)
+  # tail部分の確率部分：調整してF_tail(x-u)の値とする
+  p_tail_target <- (p_total - F_body(u)) / (1 - F_body(u))
+  # GPDの逆関数：
+  if (abs(xi) > 1e-6) {
+    y <- beta/xi * ((1 - p_tail_target)^(-xi) - 1)
+  } else {
+    y <- - beta * log(1 - p_tail_target)
+  }
+  return(u + y)
+}
+
+# (c) ブレンディングした全体の逆関数（リスクカーブ）は、T < T0ならボディモデル、T >= T0ならテールモデル
+Q_blend <- function(T) {
+  if (T < T0) {
+    return(Q_body(T))
+  } else {
+    return(Q_tail(T))
+  }
+}
+Q_blend_vec <- Vectorize(Q_blend)
+
+# --- 4. リスクカーブのプロット ---
+# 再現期間 T の範囲（例：1年から1000年まで、対数スケールで表示）
+T_vals <- exp(seq(log(1), log(1000), length.out = 500))
+loss_vals <- Q_blend_vec(T_vals)
+
+plot(T_vals, loss_vals, type = "l", log = "x", lwd = 2, col = "red",
+     xlab = "Return Period (years)", ylab = "Loss",
+     main = "Blended Risk Curve (Body for T<T0, Tail for T>=T0)")
+abline(v = T0, col = "blue", lty = 2)
+text(T0, max(loss_vals), labels = paste("T0 =", round(T0,1), "years"), pos = 4)
+
+# --- 補足：T=0に近い短い再現期間については、理論上はボディ分布で求めることになるが、
+# 注意：Tは0にならない（0年は定義できない）ため、最低値は1年程度から扱います。
