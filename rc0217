@@ -1,103 +1,166 @@
-# --- 事前準備 ---
-library(fitdistrplus)  # ボディ分布フィッティング用
+# 必要なパッケージの読み込み
+library(fitdistrplus)  # 分布フィッティング用
 library(evir)          # GPDフィッティング用
 
-# loss_data: 損害額のデータベクトル（実データを用いる）
-# 例としてダミーデータを生成する場合：
-#set.seed(123)
-#loss_data <- c(rlnorm(1000, meanlog = 10, sdlog = 0.5), rlnorm(100, meanlog = 12, sdlog = 0.7))
+# --- 1. データの用意 ---
+# ※ 実際は実績データ、シナリオデータをファイル等から読み込む
 
-# 観測期間（年）
-T_obs <- 10  
-lambda_total <- length(loss_data) / T_obs
+set.seed(123)
+# 実績データ：例として、対数正規分布に従う損害（単位：円）
+# MEPにより閾値 18百万円（18e6）以上のみをフィッティングに用いると仮定
+actual_threshold <- 18e6  
+actual_data_all <- rlnorm(1000, meanlog = log(50e6), sdlog = 0.5)
+actual_data <- actual_data_all[ actual_data_all > actual_threshold ]
 
-# 閾値 u を95パーセンタイルで設定
-u <- quantile(loss_data, 0.95)
+# シナリオデータ：例として、17年分で年平均2件程度のイベント
+# ※ ここではシナリオ全体のデータをシミュレーションし、60%が4億円以上となるようにする
+years <- 17
+n_scen_events <- round(2 * years)  # 約34件
+scenario_data_all <- rlnorm(n_scen_events, meanlog = log(500e6), sdlog = 0.8)
+# シナリオでは、閾値を4億円（4e8）とする
+scen_threshold <- 4e8  
+# （実際は、閾値以下のデータと超過分の割合等で調整済みのデータとする）
+# ここではGPDフィッティングには閾値以上のデータを使用
+scenario_data <- scenario_data_all[ scenario_data_all > scen_threshold ]
 
-# --- 1. ボディ部分のフィッティング：対数正規分布（x <= u） ---
-body_data <- loss_data[loss_data <= u]
-fit_body <- fitdist(body_data, "lnorm")  # 推定パラメータ: meanlog, sdlog
+# --- 2. 分布フィッティング ---
+# (1) 実績データ：対数正規分布
+fit_actual <- fitdist(actual_data, "lnorm")
+cat("対数正規分布フィッティング結果（実績データ）:\n")
+print(fit_actual)
 
-# ボディ分布のCDF（対数正規分布）
-F_body <- function(x) {
-  plnorm(x, meanlog = fit_body$estimate["meanlog"], sdlog = fit_body$estimate["sdlog"])
-}
+# (2) シナリオデータ：GPDフィッティング（閾値scen_threshold以上）
+fit_gpd <- gpd(scenario_data_all, threshold = scen_threshold)
+# evir::gpd() の結果からパラメータを抽出
+xi    <- fit_gpd$par.ests["xi"]
+sigma <- fit_gpd$par.ests["beta"]
+cat("\nGPDフィッティング結果（シナリオデータ）:\n")
+print(fit_gpd$par.ests)
 
-# --- 2. テール部分のフィッティング：GPD（x > u） ---
-# u を超える部分（超過分: y = x - u）
-excess_data <- loss_data[loss_data > u] - u
-gpd_fit <- gpd(loss_data, threshold = u)  # evir::gpd() を使用
-beta <- as.numeric(gpd_fit$par.ests["beta"])
-xi   <- as.numeric(gpd_fit$par.ests["xi"])
+# --- 3. シナリオ側の頻度調整 ---
+# シナリオデータは17年分、かつ全体で年平均約2件のイベントがあるとする
+# そのうち、60%が閾値（4億円）超えなので、年間閾値超え頻度は
+lambda_scen_all <- n_scen_events / years      # 年平均イベント数
+lambda_eff      <- lambda_scen_all * 0.6        # 年平均「閾値超え」イベント数
 
-# GPDのCDFおよび密度（ここでは逆関数に必要な部分のみ）
-F_tail <- function(y) {
+# シナリオのリスクカーブは、GPD部分が有効になるのは、閾値に対応する再現期間
+# （Poissonの考え方より、再現期間 T_blend = 1 / (lambda_eff)）
+T_blend <- 1 / lambda_eff  
+cat("\nシナリオ側の最小再現期間 T_blend =", T_blend, "年\n")
+
+# --- 4. リスクカーブの作成とブレンド ---
+# リターン期間のグリッド（例：0.5年〜200年）
+T_grid <- seq(0.5, 200, length.out = 1000)
+risk_curve <- numeric(length(T_grid))
+
+# 関数：GPDによるリスクカーブの計算（xiが0でない場合と0の場合で場合分け）
+calc_gpd_quantile <- function(T, threshold, sigma, xi, lambda_eff) {
+  # 年間の超過確率： p = 1/T をリスク水準と見なす
+  # モデル： 1/T = lambda_eff * [1 + xi*(x - threshold)/sigma]^(-1/xi)
+  # よって、解いて
+  # x = threshold + (sigma/xi)*[(lambda_eff*T)^xi - 1]   (xi != 0)
   if (abs(xi) > 1e-6) {
-    return(1 - (1 + xi * y / beta)^(-1/xi))
+    return( threshold + (sigma/xi) * ((lambda_eff * T)^xi - 1) )
   } else {
-    return(1 - exp(-y / beta))
+    return( threshold + sigma * log(lambda_eff * T) )
   }
 }
 
-# --- 3. ブレンディングモデルの「逆関数（リスクカーブ）」定義 ---
-
-# まず、u に対応するボディ側の累積確率
-p_tail <- 1 - F_body(u)
-# u に対応するリスク（再現期間）：
-T0 <- 1 / (lambda_total * p_tail)
-cat("Blending threshold (T0) =", T0, "years\n")
-
-# (a) ボディ側の損害額の逆関数：
-# 　ボディモデルは x < u で、F_body(x) = 1 - 1/(λ_total * T)
-# よって、与えられたTに対して、
-#    Q_body(T) = qlnorm(1 - 1/(λ_total * T), meanlog, sdlog)
-Q_body <- function(T) {
-  p <- 1 - 1 / (lambda_total * T)
-  qlnorm(p, meanlog = fit_body$estimate["meanlog"], sdlog = fit_body$estimate["sdlog"])
-}
-
-# (b) テール側の損害額の逆関数：
-# 　GPDの分位点は、対数正規のボディ部分で u に対応する確率は F_body(u) なので、
-# 　全体の累積確率は F(x) = F_body(u) + (1 - F_body(u)) * F_tail(x - u)
-# 　与えられたT（T >= T0）に対して、1 - F(x) = 1/(λ_total * T)
-# 　→ F_tail(x - u) = (1/(λ_total * T) - F_body(u)) / (1 - F_body(u))
-# 　これの逆関数（GPDの逆関数）を用いて、
-#    Q_tail(T) = u + (β/ξ) * { [ (1 - F_body(u))/(1/(λ_total * T) - F_body(u)) ]^(-ξ) - 1 }
-# ※ 注意：この式は文献によって表現が異なる場合があるため、ここでは一例として示します。
-Q_tail <- function(T) {
-  # 全体の確率レベル corresponding to return period T
-  p_total <- 1 - 1/(lambda_total * T)
-  # tail部分の確率部分：調整してF_tail(x-u)の値とする
-  p_tail_target <- (p_total - F_body(u)) / (1 - F_body(u))
-  # GPDの逆関数：
-  if (abs(xi) > 1e-6) {
-    y <- beta/xi * ((1 - p_tail_target)^(-xi) - 1)
+# ブレンド： T < T_blend では実績データ側（対数正規分布）のリスクカーブを使用、
+#           T >= T_blend ではシナリオ側（GPD）のリスクカーブを使用
+for (i in seq_along(T_grid)) {
+  T_val <- T_grid[i]
+  if (T_val < T_blend) {
+    # 対数正規分布の場合：損害額の上側確率が1/Tとなるので
+    risk_curve[i] <- qlnorm(1 - 1/T_val,
+                            meanlog = fit_actual$estimate["meanlog"],
+                            sdlog   = fit_actual$estimate["sdlog"])
   } else {
-    y <- - beta * log(1 - p_tail_target)
-  }
-  return(u + y)
-}
-
-# (c) ブレンディングした全体の逆関数（リスクカーブ）は、T < T0ならボディモデル、T >= T0ならテールモデル
-Q_blend <- function(T) {
-  if (T < T0) {
-    return(Q_body(T))
-  } else {
-    return(Q_tail(T))
+    risk_curve[i] <- calc_gpd_quantile(T_val, scen_threshold, sigma, xi, lambda_eff)
   }
 }
-Q_blend_vec <- Vectorize(Q_blend)
 
-# --- 4. リスクカーブのプロット ---
-# 再現期間 T の範囲（例：1年から1000年まで、対数スケールで表示）
-T_vals <- exp(seq(log(1), log(1000), length.out = 500))
-loss_vals <- Q_blend_vec(T_vals)
+# --- 5. プロット ---
+plot(T_grid, risk_curve/1e6, type = "l", log = "x",
+     xlab = "再現期間 (年, 対数スケール)",
+     ylab = "損害額 (百万円)",
+     main = "実績データとシナリオデータのリスクカーブ（ブレンド）")
+abline(v = T_blend, col = "red", lty = 2)
+legend("topleft", legend = c("リスクカーブ", paste("ブレンド切替点 (T =", round(T_blend,2), "年)")),
+       col = c("black", "red"), lty = c(1,2), bty = "n")
 
-plot(T_vals, loss_vals, type = "l", log = "x", lwd = 2, col = "red",
-     xlab = "Return Period (years)", ylab = "Loss",
-     main = "Blended Risk Curve (Body for T<T0, Tail for T>=T0)")
-abline(v = T0, col = "blue", lty = 2)
-text(T0, max(loss_vals), labels = paste("T0 =", round(T0,1), "years"), pos = 4)
 
-# --- 補足：T=0に近い短い再現期間については、理論上はボディ分布で求めることになるが、
-# 注意：Tは0にならない（0年は定義できない）ため、最低値は1年程度から扱います。
+# --- 6. ブレンドモデルによるVaRとTVaRの計算 ---
+# 以下の関数は、信頼水準 p（例：0.99 や 0.995）に対して、
+# ブレンドモデル（実績側：対数正規分布 / シナリオ側：GPD）により
+# VaRとTVaRを計算します。
+
+calc_VaR_TVaR <- function(p, 
+                           actual_params,  # list(meanlog, sdlog) for lognormal
+                           scen_threshold, sigma, xi, lambda_eff, T_blend) {
+  # 信頼水準 p に対応する return period T を計算
+  # ※ 実績側は p = 1 - 1/T  の関係、シナリオ側は頻度調整済みで同様の考え方
+  T_val <- 1/(1 - p)
+  
+  if (T_val < T_blend) {
+    # ---- 実績側（対数正規分布）を使用する場合 ----
+    VaR <- qlnorm(p, meanlog = actual_params$meanlog,
+                      sdlog   = actual_params$sdlog)
+    # lognormal の TVaR（条件付き期待値）の計算式
+    # E[X|X>a] = exp(mu + sigma^2/2) * (1 - Phi((log(a) - mu - sigma^2)/sigma)) / (1 - p)
+    mu  <- actual_params$meanlog
+    sig <- actual_params$sdlog
+    TVaR <- exp(mu + sig^2/2) * (1 - pnorm((log(VaR) - mu - sig^2)/sig)) / (1 - p)
+    branch <- "actual (lognormal)"
+  } else {
+    # ---- シナリオ側（GPD）を使用する場合 ----
+    # ※ 当モデルでは、リスクカーブ作成時に以下の関係を用いています:
+    #     1/T = lambda_eff * [1 + xi*(x - threshold)/sigma]^(-1/xi)
+    # よって、x = threshold + (sigma/xi)*[ (lambda_eff*T)^xi - 1 ]
+    # ここでは T = 1/(1-p) として VaR を計算
+    VaR <- scen_threshold + (sigma/xi) * ( ((lambda_eff/(1 - p))^xi) - 1 )
+    if (xi >= 1) {
+      warning("xi >= 1 のため TVaR は定義できません（無限大または不安定）")
+      TVaR <- Inf
+    } else {
+      # GPD の TVaR（Expected Shortfall）の既知の式:
+      # TVaR = (VaR + sigma - xi * threshold) / (1 - xi)
+      TVaR <- (VaR + sigma - xi * scen_threshold) / (1 - xi)
+    }
+    branch <- "scenario (GPD)"
+  }
+  return(list(VaR = VaR, TVaR = TVaR, branch = branch))
+}
+
+# --- 7. 使用例 ---
+# 例えば、信頼水準 99% と 99.5% について計算
+
+# actual_params は、実績データフィッティング結果（対数正規分布）のパラメータ
+actual_params <- list(meanlog = fit_actual$estimate["meanlog"],
+                      sdlog   = fit_actual$estimate["sdlog"])
+
+# 信頼水準のベクトル（必要に応じて追加してください）
+confidence_levels <- c(0.99, 0.995)
+
+# 各信頼水準で VaR, TVaR を計算
+risk_measures <- lapply(confidence_levels, function(p) {
+  calc_VaR_TVaR(p, actual_params, scen_threshold, sigma, xi, lambda_eff, T_blend)
+})
+names(risk_measures) <- paste0("p=", confidence_levels)
+print(risk_measures)
+
+# --- 8. 結果のプロット例 ---
+# 信頼水準に対する VaR をグラフで確認する例
+p_grid <- seq(0.90, 0.999, length.out = 100)
+VaR_vals <- sapply(p_grid, function(p) {
+  T_val <- 1/(1-p)
+  if (T_val < T_blend) {
+    qlnorm(p, meanlog = actual_params$meanlog, sdlog = actual_params$sdlog)
+  } else {
+    scen_threshold + (sigma/xi) * ( ((lambda_eff/(1-p))^xi) - 1 )
+  }
+})
+plot(p_grid, VaR_vals/1e6, type = "l", 
+     xlab = "信頼水準 p", ylab = "VaR (百万円)",
+     main = "ブレンドモデルによる VaR の信頼水準依存性")
+
