@@ -164,3 +164,72 @@ plot(p_grid, VaR_vals/1e6, type = "l",
      xlab = "信頼水準 p", ylab = "VaR (百万円)",
      main = "ブレンドモデルによる VaR の信頼水準依存性")
 
+
+# ----- 1. loss水準から信頼水準（p）を逆算する関数 -----
+calc_confidence_from_loss <- function(x, actual_params, scen_threshold, sigma, xi, lambda_eff, T_blend) {
+  # ブレンド切替点に対応する信頼水準
+  p_blend <- 1 - 1/T_blend
+  # 実績側リスクカーブ上でのブレンド切替ロス
+  VaR_blend <- qlnorm(p_blend, meanlog = actual_params$meanlog, sdlog = actual_params$sdlog)
+  
+  if (x < VaR_blend) {
+    # 実績側（対数正規分布）の場合：逆関数で p = P(X <= x) を求める
+    p <- plnorm(x, meanlog = actual_params$meanlog, sdlog = actual_params$sdlog)
+    branch <- "actual (lognormal)"
+  } else {
+    # シナリオ側（GPD）の場合
+    # 式: x = scen_threshold + (sigma/xi)*[ ( (lambda_eff/(1-p))^xi ) - 1 ]
+    # これを p について解くと:
+    #   (lambda_eff/(1-p))^xi = 1 + (xi/sigma)*(x - scen_threshold)
+    #   → 1-p = lambda_eff / [ 1 + (xi/sigma)*(x - scen_threshold) ]^(1/xi)
+    #   → p = 1 - lambda_eff / [ 1 + (xi/sigma)*(x - scen_threshold) ]^(1/xi)
+    if (abs(xi) > 1e-6) {
+      p <- 1 - lambda_eff / ((1 + (xi/sigma)*(x - scen_threshold))^(1/xi))
+    } else {
+      # ξ ≈ 0 の場合は、対数の極限形を用いる
+      p <- 1 - lambda_eff * exp(-(x - scen_threshold)/sigma)
+    }
+    branch <- "scenario (GPD)"
+  }
+  return(list(p = p, branch = branch))
+}
+
+# ----- 2. 指定ロス水準に対応する信頼水準と TVaR を計算 -----
+# ここではロス水準を「10億、20億、30億、50億、100億円」としています
+# ※ 金額の単位は円で表記しています。
+loss_levels <- c(1e9, 2e9, 3e9, 5e9, 1e10)
+
+# 結果格納用のデータフレーム
+results <- data.frame(Loss = loss_levels,
+                      Confidence = NA,
+                      VaR = NA,
+                      TVaR = NA,
+                      Branch = NA,
+                      stringsAsFactors = FALSE)
+
+# 各ロス水準について逆算
+for (i in seq_along(loss_levels)) {
+  x <- loss_levels[i]
+  # 1. loss x に対応する信頼水準 p を求める
+  inv_res <- calc_confidence_from_loss(x, actual_params, scen_threshold, sigma, xi, lambda_eff, T_blend)
+  p_val <- inv_res$p
+  branch <- inv_res$branch
+  
+  # 2. 得られた p に対して、モデルでの VaR と TVaR を計算
+  risk_res <- calc_VaR_TVaR(p_val, actual_params, scen_threshold, sigma, xi, lambda_eff, T_blend)
+  
+  results$Confidence[i] <- p_val
+  results$VaR[i] <- risk_res$VaR
+  results$TVaR[i] <- risk_res$TVaR
+  results$Branch[i] <- branch
+}
+
+# 結果表示（単位は円）
+print(results)
+
+# 結果を見やすくするために、必要に応じて単位変換（例：億円単位）することも可能です
+results$Loss_in_oku <- results$Loss / 1e8  # 1億=1e8円
+results$VaR_in_oku  <- results$VaR  / 1e8
+results$TVaR_in_oku <- results$TVaR / 1e8
+
+print(results[, c("Loss_in_oku", "Confidence", "VaR_in_oku", "TVaR_in_oku", "Branch")])
