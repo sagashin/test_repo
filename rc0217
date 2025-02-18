@@ -233,3 +233,79 @@ results$VaR_in_oku  <- results$VaR  / 1e8
 results$TVaR_in_oku <- results$TVaR / 1e8
 
 print(results[, c("Loss_in_oku", "Confidence", "VaR_in_oku", "TVaR_in_oku", "Branch")])
+
+
+calc_blended_TVaR <- function(p, actual_params, u, sigma, xi) {
+  # p: 信頼水準（例: 0.99）
+  # actual_params: 対数正規分布のパラメータ（list(meanlog, sdlog)）
+  # u: GPDの閾値（例: 4e8 円）
+  # sigma, xi: GPDの尺度・形状パラメータ
+  
+  meanlog <- actual_params$meanlog
+  sdlog   <- actual_params$sdlog
+  
+  # 実績側のCDFと密度（対数正規分布）
+  F_ln <- function(x) { plnorm(x, meanlog = meanlog, sdlog = sdlog) }
+  f_ln <- function(x) { dlnorm(x, meanlog = meanlog, sdlog = sdlog) }
+  
+  # 閾値 u 以下の累積確率
+  p0 <- F_ln(u)
+  
+  # まず、混合分布のCDFは
+  #   F(x) = F_ln(x)           for x < u,
+  #   F(x) = p0 + (1-p0)*G(x)   for x >= u,
+  # となる（ここで G(x) はGPDのCDF）。
+  #
+  # しかし、TVaRは「VaR以上」の条件付き期待値なので、場合分けが必要です。
+  
+  if (p < p0) {
+    # ケース1: VaRが閾値 u 未満
+    # VaRは対数正規分布の逆関数から求める
+    VaR <- qlnorm(p, meanlog = meanlog, sdlog = sdlog)
+    
+    # [VaR, u) の部分は対数正規分布から
+    I1 <- integrate(function(x) x * f_ln(x), lower = VaR, upper = u)$value
+    
+    # u 以降の部分は、GPDの重み (1-p0) に対して
+    # GPDでの条件付き期待値は u + sigma/(1-xi) （xi<1の条件下）
+    if (xi >= 1) {
+      tail_expectation <- Inf
+    } else {
+      tail_expectation <- u + sigma/(1 - xi)
+    }
+    
+    # 全体のTVaR: [VaR, u)部分の積分＋ (1-p0) * (GPD部分) を1/(1-p)で割る
+    TVaR <- (I1 + (1 - p0) * tail_expectation) / (1 - p)
+    branch <- "blended: VaR in LN region"
+    
+  } else {
+    # ケース2: VaRがすでに閾値 u 以上 → GPD領域
+    # 混合分布のCDFで、x >= uの場合:
+    #   F(x) = p0 + (1-p0) * (1 - [1 + xi*(x-u)/sigma]^(-1/xi))
+    # を p とおき、xについて解くと
+    #   VaR = u + (sigma/xi)*(((1-p0)/(1-p))^xi - 1)
+    VaR <- u + (sigma/xi) * ((((1 - p0)/(1 - p))^xi) - 1)
+    
+    if (xi >= 1) {
+      TVaR <- Inf
+    } else {
+      # GPD領域でのTVaRの公式
+      TVaR <- (VaR + sigma - xi * u) / (1 - xi)
+    }
+    branch <- "GPD region"
+  }
+  
+  return(list(VaR = VaR, TVaR = TVaR, branch = branch))
+}
+
+# 使用例:
+# （前提：actual_params, u, sigma, xiは既に定義されているとします）
+# 例: 信頼水準 99%
+actual_params <- list(meanlog = fit_actual$estimate["meanlog"],
+                      sdlog   = fit_actual$estimate["sdlog"])
+u <- scen_threshold  # 例: 4e8
+p_example <- 0.99
+
+result <- calc_blended_TVaR(p_example, actual_params, u, sigma, xi)
+print(result)
+
