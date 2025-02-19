@@ -1,0 +1,182 @@
+# シード設定（再現性のため）
+set.seed(123)
+
+# シミュレーション年数
+n_years <- 10000
+
+# 事故頻度：年間事故発生件数を Poisson(λ) でシミュレーション
+lambda <- 2  # 平均事故件数
+accident_count <- rpois(n_years, lambda)
+
+# 対数正規分布のパラメータ
+meanlog <- 0
+sdlog <- 1
+
+# 各年の損失額（対数正規分布による損失）
+annual_loss_lognormal <- numeric(n_years)
+for(i in 1:n_years) {
+  if(accident_count[i] > 0) {
+    # その年に発生した各事故の損失を生成
+    losses <- rlnorm(accident_count[i], meanlog = meanlog, sdlog = sdlog)
+    # 年間損失は各事故損失の合計
+    annual_loss_lognormal[i] <- sum(losses)
+  } else {
+    annual_loss_lognormal[i] <- 0
+  }
+}
+
+# 結果の確認：ヒストグラム表示
+hist(annual_loss_lognormal, breaks = 50,
+     main = "対数正規分布による年間損失額の分布",
+     xlab = "年間損失額")
+
+# GPD 乱数生成関数の定義
+rgpd <- function(n, sigma, xi) {
+  # 一様乱数
+  p <- runif(n)
+  # xi が 0 の場合は指数分布に相当
+  if (xi == 0) {
+    return(-sigma * log(1 - p))
+  } else {
+    return(sigma/xi * ((1 - p)^(-xi) - 1))
+  }
+}
+
+# シード設定（再現性のため）
+set.seed(123)
+
+# シミュレーション年数
+n_years <- 10000
+
+# 事故頻度：年間事故発生件数を Poisson(λ) でシミュレーション
+lambda <- 2  # 平均事故件数
+accident_count <- rpois(n_years, lambda)
+
+# GPD のパラメータ設定（例：scale=sigma=50, shape=xi=0.3）
+sigma <- 50
+xi <- 0.3
+
+# 各年の損失額（GPD による損失）
+annual_loss_gpd <- numeric(n_years)
+for(i in 1:n_years) {
+  if(accident_count[i] > 0) {
+    # その年に発生した各事故の損失を GPD から生成
+    losses <- rgpd(accident_count[i], sigma = sigma, xi = xi)
+    # 年間損失は各事故損失の合計
+    annual_loss_gpd[i] <- sum(losses)
+  } else {
+    annual_loss_gpd[i] <- 0
+  }
+}
+
+# 結果の確認：ヒストグラム表示
+hist(annual_loss_gpd, breaks = 50,
+     main = "一般化パレート分布による年間損失額の分布",
+     xlab = "年間損失額")
+
+
+# 必要なパッケージの読み込み
+library(copula)
+
+# ------------------------------
+# 1. シミュレーションの基本パラメータ設定
+# ------------------------------
+set.seed(123)           # 再現性のため
+n_years <- 10000        # シミュレーション年数
+lambda  <- 2            # 事故頻度の平均（Poissonのλ）
+
+# 小損失：対数正規分布のパラメータ
+meanlog <- 0
+sdlog   <- 1
+
+# ラージ損失：一般化パレート分布 (GPD) のパラメータ
+sigma <- 50             # スケール
+xi    <- 0.3            # シェイプ
+
+# ここでTVaRを計算する信頼水準（例：95%）
+alpha <- 0.95
+
+# ------------------------------
+# 2. rgpd 関数の定義（GPDの乱数生成）
+# ------------------------------
+rgpd <- function(n, sigma, xi) {
+  # 一様乱数
+  p <- runif(n)
+  if (xi == 0) {
+    # xi==0 の場合は指数分布と同等
+    return(-sigma * log(1 - p))
+  } else {
+    return(sigma/xi * ((1 - p)^(-xi) - 1))
+  }
+}
+
+# ------------------------------
+# 3. 事故頻度に対する相関の導入（Gaussian copula）
+# ------------------------------
+rho <- 0.25  # 目標の相関係数
+cop <- normalCopula(param = rho, dim = 2)
+
+# 各年ごとに、2プロセス（小損・ラージ損）の事故頻度用の一様乱数ペアを生成
+u_freq <- rCopula(n_years, cop)  # 各行が [u1, u2]
+
+# 事故頻度のシミュレーション（逆変換法：Poissonの分位点関数）
+freq_small <- qpois(u_freq[,1], lambda)
+freq_large <- qpois(u_freq[,2], lambda)
+
+# ------------------------------
+# 4. 各年の aggregate loss をシミュレーション
+# ------------------------------
+# 初期化
+loss_small <- numeric(n_years)   # 対数正規分布による小損失の年間合計
+loss_large <- numeric(n_years)   # GPD によるラージ損失の年間合計
+
+# 各年ごとに、発生した事故数に応じて損失額をシミュレーションして合算
+for(i in 1:n_years) {
+  # 小損失（対数正規）
+  if(freq_small[i] > 0) {
+    # その年の各事故ごとに損失額を生成
+    losses_small <- rlnorm(freq_small[i], meanlog = meanlog, sdlog = sdlog)
+    loss_small[i] <- sum(losses_small)
+  } else {
+    loss_small[i] <- 0
+  }
+  
+  # ラージ損失（GPD）
+  if(freq_large[i] > 0) {
+    losses_large <- rgpd(freq_large[i], sigma = sigma, xi = xi)
+    loss_large[i] <- sum(losses_large)
+  } else {
+    loss_large[i] <- 0
+  }
+}
+
+# ------------------------------
+# 5. 2つのプロセスを合算
+# ------------------------------
+total_loss <- loss_small + loss_large
+
+# ------------------------------
+# 6. 統計量の計算：分散 (var) とTVaR (Tail VaR)
+# ------------------------------
+# 分散
+var_total <- var(total_loss)
+
+# VaR (信頼水準alpha での損失額の分位点)
+VaR <- quantile(total_loss, alpha)
+
+# TVaR（VaR超過分の平均）
+# ※ TVaRは、損失がVaRを超えた場合の平均損失
+TVaR <- mean(total_loss[total_loss > VaR])
+
+# 結果の出力
+cat("【シミュレーション結果】\n")
+cat("総損失の分散 (var):", var_total, "\n")
+cat("VaR (", alpha*100, "%):", VaR, "\n")
+cat("TVaR (", alpha*100, "%):", TVaR, "\n")
+
+# ヒストグラムで総損失の分布を表示
+hist(total_loss, breaks = 50,
+     main = "総損失の分布 (10,000年シミュレーション)",
+     xlab = "年間総損失")
+
+
