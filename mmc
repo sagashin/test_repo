@@ -1,0 +1,112 @@
+library(readxl)
+library(ChainLadder)
+library(tidyverse)
+library(writexl)
+library(plyr)
+library(lubridate)
+library(purrr)
+
+setwd("C:/Users/ssagara/OneDrive - American International Group, Inc/ロス分析など")
+
+# ロスデータ読み込み
+df_loss_all <- read.csv("all_line_2023-2025_incremental_LI_aym_bym_202503.csv")
+df_ep_all <- read_excel("Triangle_Monthly_MMC_202503_v1.xlsx", sheet = "PE")
+df_ep_all <- df_ep_all %>% 
+  select(everything(), -MMC...1,MMC = MMC...2, )
+df_ep_all <- df_ep_all %>% pivot_longer(
+  cols = -MMC,
+  names_to = "Accident_Month",
+  values_to = "PE"
+) %>% 
+  mutate(Accident_Month = as.integer(Accident_Month))
+df <- left_join(df_loss_all, df_ep_all, by = c("MMC", "Accident_Month"))
+
+# AYMの最終経過月を計算
+start <- ymd("2023-01-01")
+end <- ym(max(df_loss_all$Accident_Month))
+elapsed <- interval(start, end) %/% months(1) 
+# 事故年度を補完
+full_ym <- as.numeric(seq(start,
+               end, 
+               by = "month") |>
+            format("%Y%m"))
+
+# カテゴリー確認
+unique(df_loss_all$Res_segment)
+
+# トライアングルデータ作成準備
+# CAT除く
+triangles <- df_loss_all %>% 
+  select(Res_segment, Accident_Month, Elapsed_Month_from_Accident, LI) %>% 
+  group_by(Res_segment) %>% 
+  group_nest()
+
+# 経過月の調整
+prep_fill_full <- function(tbl){
+  tbl %>% 
+    complete(
+      Accident_Month = full_ym, #事故月を 202301–202503 で埋める
+      Elapsed_Month_from_Accident = 0:elapsed 
+    ) %>% 
+    arrange(Accident_Month, Elapsed_Month_from_Accident)
+}
+
+# トライアングルデータ作成
+to_tri <- function(tbl){
+  tbl <- as.triangle(tbl,
+                     origin="Accident_Month",
+                     dev="Elapsed_Month_from_Accident",
+                     value="LI")
+  tbl <- as.matrix(incr2cum(tbl, na.rm = T))
+}
+# Linkratioの計算
+calc_linkratio <- function(tbl){
+  linkratios <- c(attr(ata(tbl), "vwtd"), tail = 1.00)
+}
+# LDFの計算 (Linkratioを累積)
+calc_LDF <- function(tbl){
+  LDF <- rev(cumprod(rev(tbl)))
+}
+# Ultimate & IBNRの計算
+make_exhibit <- function(tri, LDF){
+  Accident_Month <- rownames(tri)
+  currentEval <- getLatestCumulative(tri)
+  EstdUlt <- currentEval * rev(LDF)
+  IBNR <- EstdUlt - currentEval
+  Exhibit <- data.frame(Accident_Month, currentEval, LDF = rev(LDF), EstdUlt, IBNR)
+  Exhibit <- rbind(Exhibit,
+                   data.frame(Accident_Month = "Total", currentEval=sum(currentEval), LDF=NA, EstdUlt=sum(EstdUlt), IBNR=sum(IBNR),
+                              row.names = "Total"))
+  return(Exhibit)
+}
+
+# 各計算実行
+results <- triangles %>% 
+  mutate(
+    clean = map(data, prep_fill_full),
+    tri = map(clean, to_tri),
+    linkratios = map(tri, calc_linkratio),
+    LDF = map(linkratios, calc_LDF),
+    Exhibit = map2(tri, LDF, ~make_exhibit(.x, .y)),
+  ) 
+
+# 担保種目別サマリ表の統合
+all_line_Exhibit <- data.frame()
+for(i in 1:dim(results)[1]){
+  df0 <- cbind(Res_segment = results$Res_segment[[i]], results$Exhibit[[i]])
+  all_line_Exhibit <- rbind(all_line_Exhibit, df0)
+}
+# Incurred Loss Developmentを担保種目＆AYM別にプロット
+for(i in 1:19){
+  print(plot(results$tri[[i]], lattice=TRUE, main = results$Res_segment[[i]]))
+}
+
+# 担保種目別トライアングルデータ
+all_line_tri <- data.frame()
+for(i in 1:dim(results)[1]){
+  df0 <- cbind(Res_segment = results$Res_segment[[i]], data.frame(results$tri[[i]]))
+  all_line_tri <- rbind(all_line_tri, df0)
+}
+
+
+
