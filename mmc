@@ -1,3 +1,30 @@
+make_exhibit <- function(tri, LDF){
+  Accident_Month <- rownames(tri)
+  currentEval <- getLatestCumulative(tri)
+  EstdUlt <- currentEval * rev(LDF)
+  IBNR <- EstdUlt - currentEval
+  #PE <- pe["PE"]
+  Exhibit <- data.frame(Accident_Month, currentEval, LDF = rev(LDF), EstdUlt, IBNR)
+  Exhibit <- rbind(Exhibit,
+                   data.frame(Accident_Month = "Total", currentEval=sum(currentEval), LDF=NA, EstdUlt=sum(EstdUlt), 
+                              IBNR=sum(IBNR),
+                              row.names = "Total"))
+  return(Exhibit)
+}
+
+# 各計算実行
+results <- triangles %>% 
+  mutate(
+    clean = map(data, prep_fill_full),
+    tri = map(clean, to_tri),
+    linkratios = map(tri, calc_linkratio),
+    LDF = map(linkratios, calc_LDF),
+    pe_vec = map(clean, pe),
+    Exhibit = map2(tri, LDF, ~make_exhibit(.x, .y)),
+    #Exhibit = pmap(list(tri, LDF, pe_vec), make_exhibit),
+  ) 
+
+
 library(readxl)
 library(ChainLadder)
 library(tidyverse)
