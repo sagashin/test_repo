@@ -1,0 +1,130 @@
+library(readxl)
+library(ChainLadder)
+library(tidyverse)
+library(writexl)
+library(plyr)
+
+setwd("//fkfs01kj/202_Common2/ECM/JapanModel/2024/Mar2024/Actual/Data/Sonpo/5. ロスデータ")
+
+df_loss_sonpo <- read_excel("ORSA_Loss_202403.xlsx", sheet = "ORSA_Loss_202403")
+df_loss_ffm <- read_excel("FFMロスデータ_202403.xlsx", sheet = "IMRTERM")
+
+unique(df_loss_sonpo$MOF_LINE_CD)
+
+df_loss_ffm <- df_loss_ffm %>% 
+  filter(経過年数 > 0)
+
+
+# AYMの最終経過月を計算
+start <- min(df_loss_sonpo$ACCIDENT_FY)
+end <- max(df_loss_sonpo$ACCIDENT_FY)
+elapsed <- end-start
+
+# 事故年度を補完
+full_ym <- as.numeric(seq(start,end))
+
+df_loss_sonpo <- df_loss_sonpo %>%
+  filter(CAT_TYPE == 0) %>% # CATを除く
+  mutate(DIRECT_ELAPSED_FY = DIRECT_ELAPSED_FY+1) %>%
+  mutate(LoB = case_when(
+    MOF_LINE_CD %in% c("115", "121") ~ "Personal_Property",
+    MOF_LINE_CD %in% c("111", "112", "113", "116", "117", "118") ~ "Commercial_Property",
+    MOF_LINE_CD %in% c("211") ~ "Auto",
+    MOF_LINE_CD %in% c("311") ~ "General_Liability",
+    MOF_LINE_CD %in% c("411", "421") ~ "A&H",
+    MOF_LINE_CD %in% c("321") ~ "Workers_Comp",
+    MOF_LINE_CD %in% c("711", "811", "131", "911") ~ "Speciality",
+    MOF_LINE_CD %in% c("141", "142", "151", "161", "171", "331", "341", "351",
+                       "352", "381", "382", "611", "612", "613") ~ "Other"
+  )) %>% 
+  dplyr::group_by(LoB, ACCIDENT_FY, DIRECT_ELAPSED_FY) %>% 
+  dplyr::summarise(PAID = sum(PAID))
+  
+# For Sonpo Results
+triangles_sonpo <- df_loss_sonpo %>% 
+  group_by(LoB) %>% 
+  group_nest()
+
+## FFM
+df_loss_ffm_2 <- df_loss_ffm %>%
+  filter(災害名 == "0000年度_災害以外") %>% 
+  dplyr::rename(ACCIDENT_FY = `事故年度（3末）`, 
+                DIRECT_ELAPSED_FY = 経過年数, 
+                PAID = 支払保険金) %>%
+  filter(ACCIDENT_FY >= start) %>% 
+  mutate(LoB = case_when(
+    IBNR算出区分 %in% c("10 火災") & `Chartis LoB` %in% c("Personal Property") ~ "Personal_Property",
+    IBNR算出区分 %in% c("10 火災") & `Chartis LoB` %in% c("Property") ~ "Commercial_Property",
+    IBNR算出区分 %in% c("01 自動車：車両", "02 自動車：対人", "03 自動車：対物", 
+                         "04 自動車：搭傷", "05 自動車：人傷", "06 自動車：その他") ~ "Auto",
+    IBNR算出区分 %in% c("30 賠償責任") ~ "General_Liability",
+    IBNR算出区分 %in% c("20 傷害", "34 NGPA") ~ "A&H",
+    IBNR算出区分 %in% c("33 労働者災害補償") ~ "Workers_Comp",
+    IBNR算出区分 %in% c("80 その他") & `Chartis LoB` %in% c("Specialty Aviation", "Specialty Marine") ~ "Speciality",
+    IBNR算出区分 %in%  c("31 信用", "32 保証", "80 その他") ~ "Other"
+  )) %>% 
+  dplyr::group_by(LoB, ACCIDENT_FY, DIRECT_ELAPSED_FY) %>% 
+  dplyr::summarise(PAID = sum(PAID))
+  
+# For FFM Results
+triangles_ffm <- df_loss_ffm_2 %>% 
+  group_by(LoB) %>% 
+  group_nest()
+
+# For Sonpo & FFM Results
+df_loss_sonpo_ffm <- rbind(df_loss_sonpo, df_loss_ffm_2)
+df_loss_sonpo_ffm <- df_loss_sonpo_ffm %>% 
+  dplyr::group_by(LoB, ACCIDENT_FY, DIRECT_ELAPSED_FY) %>% 
+  dplyr::summarise(PAID = sum(PAID))
+triangles_sonpo_ffm <- df_loss_sonpo_ffm %>% 
+  group_by(LoB) %>% 
+  group_nest()
+
+
+# トライアングルデータ作成
+prep_fill_full <- function(tbl){
+  tbl %>% 
+    complete(
+      ACCIDENT_FY = full_ym, #事故月を 202301–202503 で埋める
+      DIRECT_ELAPSED_FY = 1:(elapsed+1) 
+    ) %>% 
+    arrange(ACCIDENT_FY, DIRECT_ELAPSED_FY)
+}
+to_tri <- function(tbl){
+  df <- as.triangle(tbl,
+                    origin="ACCIDENT_FY",
+                    dev="DIRECT_ELAPSED_FY",
+                    value="PAID")
+  df <- as.matrix(incr2cum(df, na.rm = T))
+}
+to_tri_df <- function(tbl){
+  df <- as.triangle(tbl,
+                    origin="ACCIDENT_FY",
+                    dev="DIRECT_ELAPSED_FY",
+                    value="PAID")
+  df <- as.matrix(incr2cum(df, na.rm = T))
+  
+  return(as.data.frame(df))
+}
+# Linkratioの計算
+calc_linkratio <- function(tbl){
+  linkratios <- c(attr(ata(tbl), "vwtd"), tail = 1.00)
+}
+# LDFの計算 (Linkratioを累積)
+calc_LDF <- function(tbl){
+  LDF <- rev(cumprod(rev(tbl)))
+}
+calc_payment_pattern <- function(tbl){
+  PP <- 1/tbl
+}
+
+# Sonpo & FFM Results
+tri_results_sonpo_ffm <- triangles_sonpo_ffm %>% 
+  mutate(
+    clean = map(data, prep_fill_full),
+    tri = map(clean, to_tri),
+    tri_in_df = map(clean, to_tri_df),
+    linkratios = map(tri, calc_linkratio),
+    LDF = map(linkratios, calc_LDF),
+    PP = map(LDF, calc_payment_pattern)
+  ) 
