@@ -1,0 +1,5 @@
+Error in `map2()`:
+ℹ In index: 1.
+ℹ With name: A&H_Triangle.
+Caused by error:
+! A dims string passed to `dims_to_rowcol()` contained no alphabetic column
