@@ -1,0 +1,33 @@
+import re, streamlit as st, networkx as nx
+from pyvis.network import Network
+from io import BytesIO
+import openpyxl as ox
+
+REF = re.compile(r"([A-Z]+[0-9]+)")
+
+@st.cache_data(show_spinner=False)
+def build_graph(wb_bytes, root):
+    wb = ox.load_workbook(BytesIO(wb_bytes), data_only=False)
+    sh = wb.active
+    G  = nx.DiGraph()
+    def walk(addr):
+        if addr in G: return
+        cell = sh[addr]
+        G.add_node(addr, value=cell.value)
+        if cell.data_type == "f":
+            for m in REF.findall(cell.value):
+                G.add_edge(addr, m)
+                walk(m)
+    walk(root)
+    return G
+
+st.title("Excel Dependency Viewer (Streamlit)")
+uploaded = st.file_uploader("Excel ファイル (.xlsx)", type="xlsx")
+root = st.text_input("起点セル (例: B2)", value="B2")
+
+if st.button("解析する") and uploaded:
+    G = build_graph(uploaded.getvalue(), root)
+    net = Network(height="600px", directed=True)
+    net.from_nx(G)
+    html = net.generate_html()
+    st.components.v1.html(html, height=650, scrolling=True)
