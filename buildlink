@@ -1,29 +1,38 @@
-'================ Link Register builder (safe) ================
+Option Explicit
+'================ Link Register builder (robust) ===============
 Sub BuildLinkRegister()
     Const WS_NAME As String = "Link_Register"
+    
     Dim wsOut As Worksheet, nxtRow As Long
     Dim sh As Worksheet, rngF As Range, c As Range
     Dim links As Variant, linkItem As Variant
     
-    '--------- 1) 出力シート準備 ----------
+    '----- 出力シート準備 -----
     Application.DisplayAlerts = False
     On Error Resume Next: Worksheets(WS_NAME).Delete: On Error GoTo 0
     Application.DisplayAlerts = True
     
     Set wsOut = Worksheets.Add(Before:=Sheets(1))
     wsOut.Name = WS_NAME
-    wsOut.Range("A1:G1").Value = Array("#", "Sheet", "Cell", "Type", "Target", "Note", "Depth")
+    wsOut.Range("A1:G1").Value = Array("#", "Sheet", "Cell", _
+                                       "Type", "Target", "Note", "Depth")
     nxtRow = 2
     
-    '--------- 2) 外部リンクソース ----------
+    '----- 外部リンクソース -----
     links = ActiveWorkbook.LinkSources(xlExcelLinks)
-    If Not IsEmpty(links) Then          'Nothing 判定は IsEmpty でOK
-        For Each linkItem In links
-            WriteRow wsOut, nxtRow, "", "", "External Source", linkItem
-        Next linkItem
+    
+    If Not (IsEmpty(links) Or links Is Nothing) Then
+        If IsArray(links) Then
+            For Each linkItem In links
+                WriteRow wsOut, nxtRow, "", "", "External Source", CStr(linkItem)
+            Next linkItem
+        Else
+            'リンクが１件のみの場合に配列で返らないレアケース対策
+            WriteRow wsOut, nxtRow, "", "", "External Source", CStr(links)
+        End If
     End If
     
-    '--------- 3) シートの数式セル走査 -----
+    '----- シートごとの数式走査 -----
     For Each sh In Worksheets
         If sh.Name <> WS_NAME Then
             On Error Resume Next
@@ -40,9 +49,11 @@ Sub BuildLinkRegister()
                     Else
                         typ = ""
                     End If
+                    
                     If typ <> "" Then
                         tgt = FirstRef(c.Formula)
-                        WriteRow wsOut, nxtRow, sh.Name, c.Address(False, False), typ, tgt
+                        WriteRow wsOut, nxtRow, sh.Name, _
+                                 c.Address(False, False), typ, tgt
                     End If
                 Next c
             End If
@@ -54,7 +65,16 @@ Sub BuildLinkRegister()
     MsgBox "Link register refreshed: " & nxtRow - 2 & " rows", vbInformation
 End Sub
 
-'------------- 補助プロシージャ --------------
+'---------- 参照セル抽出 ----------
+Private Function FirstRef(f As String) As String
+    With CreateObject("VBScript.RegExp")
+        .Pattern = "('([^']+)'|[A-Za-z0-9_]+)?!?[$]?[A-Z]{1,3}[$]?\d+"
+        .Global = False
+        If .Test(f) Then FirstRef = .Execute(f)(0).Value
+    End With
+End Function
+
+'---------- 出力ヘルパ ----------
 Private Sub WriteRow(ws As Worksheet, ByRef r As Long, _
                      sht As String, addr As String, typ As String, _
                      tgt As String, Optional note As String = "", _
@@ -70,12 +90,3 @@ Private Sub WriteRow(ws As Worksheet, ByRef r As Long, _
     End With
     r = r + 1
 End Sub
-
-'------------- 数式最初の参照セル抽出 -------
-Private Function FirstRef(f As String) As String
-    With CreateObject("VBScript.RegExp")
-        .Pattern = "('([^']+)'|[A-Za-z0-9_]+)?!?[$]?[A-Z]{1,3}[$]?\d+"
-        .Global = False
-        If .Test(f) Then FirstRef = .Execute(f)(0).Value
-    End With
-End Function
