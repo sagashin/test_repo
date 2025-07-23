@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+excel_formula_map.py  ―  エクセル数式依存マッピング（決定版）
+---------------------------------------------------------------
+usage (terminal):
+    python excel_formula_map.py Book.xlsx Sheet1!B2 --radial --out map.html
+usage (Jupyter):
+    %run excel_formula_map.py -- Book.xlsx Sheet1!B2
+---------------------------------------------------------------
+依存: openpyxl, networkx, pyvis  (pip install openpyxl networkx pyvis)
+"""
+
+import re
+import sys
+import json
+import argparse
+from pathlib import Path
+
+import openpyxl
+import networkx as nx
+from pyvis.network import Network
+
+
+# ---------- 1. 引数 ----------
+def parse_args():
+    p = argparse.ArgumentParser(description="Excel formula dependency mapper")
+    p.add_argument("xlsx", help=".xlsx file path")
+    p.add_argument("root", nargs="?", default="",
+                   help="Root node (e.g. Sheet1!B2). Auto-detect if omitted")
+    p.add_argument("--out", default="excel_formula_map.html",
+                   help="Output HTML (default excel_formula_map.html)")
+    p.add_argument("--radial", action="store_true",
+                   help="Radial layout instead of top-down hierarchical")
+    args, _ = p.parse_known_args()        # Jupyter の -f を無視
+    return args
+
+
+# ---------- 2. ユーティリティ ----------
+REF = re.compile(r"(?:'([^']+)'|([A-Za-z0-9_]+))?!?\$?[A-Z]{1,3}\$?[0-9]{1,7}", re.I)
+
+
+def clean_ref(s: str) -> str:
+    """' と $ を除去して Sheet!A1 形式へ統一"""
+    s = s.replace("$", "")
+    return s[1:-1] if s.startswith("'") and s.endswith("'") else s
+
+
+# ---------- 3. Excel → networkx ----------
+def build_graph(xlsx_path: Path) -> nx.DiGraph:
+    wb = openpyxl.load_workbook(xlsx_path, data_only=False)
+    G = nx.DiGraph()
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=False):
+            for c in row:
+                if c.data_type == "f":  # 数式セルのみ
+                    src = clean_ref(f"{ws.title}!{c.coordinate}")
+                    for m in REF.finditer(c.value):
+                        sheet = m.group(1) or m.group(2) or ws.title
+                        tgt = clean_ref(f"{sheet}!{m.group(0).split('!')[-1]}")
+                        G.add_edge(src, tgt)
+    if G.number_of_nodes() == 0:
+        sys.exit("[ERROR] 数式セルが見つかりません。")
+    return G
+
+
+# ---------- 4. 可視化 ----------
+def apply_hier_layout(net: Network, radial: bool):
+    """PyVis を階層レイアウトに設定（メソッド有無を自動判定）"""
+    if hasattr(net, "hierarchical_layout"):
+        # PyVis ≥ 0.3.2
+        if radial:
+            net.hierarchical_layout(direction="LR",
+                                     sort_method="hubsize",
+                                     centralize=False)
+        else:
+            net.hierarchical_layout(direction="UD",
+                                     sort_method="directed")
+    else:
+        # 旧版 PyVis → JSON オプションを正しい形式で注入
+        opts = {
+            "layout": {
+                "hierarchical": {
+                    "enabled": True,
+                    "direction": "LR" if radial else "UD",
+                    "sortMethod": "hubsize" if radial else "directed",
+                    "nodeSpacing": 120,
+                    "levelSeparation": 150
+                }
+            }
+        }
+        net.set_options(json.dumps(opts))
+
+
+def highlight_root(net: Network, root: str, color_bg="#FFCC00", color_border="#FF9900"):
+    """root ノードに色を付ける（get_node あり／なし両対応）"""
+    # PyVis ≥0.3.0
+    if hasattr(net, "get_node"):
+        node = net.get_node(root)
+        if node:
+            node["color"] = {"background": color_bg, "border": color_border}
+            return
+    # フォールバック： nodes をループ
+    for n in net.nodes:
+        if n["id"] == root:
+            n["color"] = {"background": color_bg, "border": color_border}
+            break
+
+
+def visualize(G: nx.DiGraph, root: str, out_file: Path, radial: bool):
+    net = Network(height="750px", width="100%", directed=True, bgcolor="#FFFFFF")
+    net.from_nx(G)
+
+    apply_hier_layout(net, radial)
+
+    # ノード情報・サイズ
+    for n in net.nodes:
+        deg = G.degree(n["id"])
+        n["title"] = f"{n['id']}<br>degree: {deg}"
+        n["value"] = deg + 1
+
+    highlight_root(net, root)
+    net.show(str(out_file))
+    print("[INFO] HTML written:", out_file.resolve())
+
+
+# ---------- 5. メイン ----------
+def main():
+    args = parse_args()
+    xlsx = Path(args.xlsx).expanduser()
+    if not xlsx.is_file():
+        sys.exit(f"[ERROR] File not found: {xlsx}")
+
+    G = build_graph(xlsx)
+
+    # root 決定（指定が空 or 不存在なら in-degree 最大セル）
+    root = clean_ref(args.root)
+    if not root or root not in G:
+        root = max(G.in_degree, key=lambda x: x[1])[0]
+        print(f"[INFO] root auto-selected: {root}")
+
+    visualize(G, root, Path(args.out), args.radial)
+
+
+if __name__ == "__main__":
+    main()
