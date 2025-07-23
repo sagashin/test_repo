@@ -1,0 +1,94 @@
+############################################################
+# excel_formula_map_depth.R
+# Excel 数式依存関係を抽出し、root から N 階層以内の部分グラフを可視化
+############################################################
+# 使い方（ターミナル or RStudio Console）:
+#   source("excel_formula_map_depth.R")
+#   run_map("Book.xlsx", root = "Summary!B2", max_depth = 2, use_circlepack = TRUE)
+############################################################
+
+run_map <- function(file, root = "", max_depth = NULL, use_circlepack = TRUE) {
+
+  #### 0. 依存パッケージ ---------------------------------
+  pkgs <- c("tidyxl", "dplyr", "stringr", "tidyr",
+            "igraph", "tidygraph", "ggraph")
+  new  <- pkgs[!pkgs %in% installed.packages()[,"Package"]]
+  if (length(new)) install.packages(new, quiet = TRUE)
+
+  lapply(pkgs, library, character.only = TRUE)
+
+  #### 1. ユーティリティ ---------------------------------
+  pat  <- "('([^']+)'|[A-Za-z0-9_]+)?!?\\$?[A-Z]{1,3}\\$?[0-9]{1,7}"
+  clean_ref <- function(x){
+    x <- gsub("\\$", "", x)
+    gsub("^'(.*)'$", "\\1", x)
+  }
+
+  #### 2. Excel 数式 → エッジ抽出 -------------------------
+  cells <- xlsx_cells(file) |>
+    filter(!is_blank, !is.na(formula))
+
+  if (nrow(cells) == 0)
+    stop("数式セルが見つかりませんでした。")
+
+  edges <- cells |>
+    rowwise() |>
+    mutate(refs = list(str_extract_all(formula,
+                     regex(pat, ignore_case = TRUE))[[1]])) |>
+    tidyr::unnest_longer(refs) |>
+    mutate(
+      src = clean_ref(paste0(sheet,"!",address)),
+      tgt_raw = clean_ref(refs),
+      tgt = if_else(str_detect(tgt_raw,"!"), tgt_raw,
+                    paste0(sheet,"!",tgt_raw))
+    ) |>
+    select(from = src, to = tgt) |>
+    distinct()
+
+  g <- graph_from_data_frame(edges, directed = TRUE)
+
+  #### 3. root 決定 --------------------------------------
+  if (root == "" || !(root %in% V(g)$name)) {
+    root <- names(sort(degree(g, mode = "in"), decreasing = TRUE))[1]
+    message("root auto-selected: ", root)
+  }
+
+  #### 4. 深さ制限 ---------------------------------------
+  if (!is.null(max_depth)) {
+    dist <- bfs(g, root = which(V(g)$name == root),
+                mode = "out", dist = TRUE)$dist
+    keep <- V(g)$name[!is.na(dist) & dist <= max_depth]
+    g    <- induced_subgraph(g, keep)
+    message("Depth ≤", max_depth, ": ", vcount(g), " nodes")
+  }
+
+  #### 5. 可視化 -----------------------------------------
+  if (use_circlepack) {
+    # 木に変換（複数親は最短親を採用）
+    g_tree <- as_tbl_graph(g) |>
+      tidygraph::convert(to_tree, root = root) |>
+      tidygraph::mutate(leafsize = ifelse(out_degree() == 0, 1, NA))
+
+    p <- ggraph(g_tree, layout = "circlepack", weight = leafsize) +
+         geom_edge_diagonal(alpha = .3) +
+         geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+         theme_void()
+  } else {
+    p <- ggraph(g, layout = "fr") +
+         geom_edge_link(alpha = .3,
+                        arrow = arrow(length = unit(3,"mm"))) +
+         geom_node_point() +
+         geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+         theme_void()
+  }
+
+  print(p)
+}
+
+################################################################
+# デフォルト動作例：ファイル名を自動検出 or 自分で引数を渡す
+################################################################
+# run_map("excel_formula_map.xlsx",
+#         root        = "Sheet1!B2",
+#         max_depth   = 2,          # NULL なら全ノード
+#         use_circlepack = TRUE)    # FALSE で FR レイアウト
