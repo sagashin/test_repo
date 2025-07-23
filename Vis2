@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+excel_formula_map_depth.py
+-------------------------------------------------------------
+Excel ブックの数式依存を可視化。root から N 階層までで軽量化可。
+-------------------------------------------------------------
+必要: openpyxl, networkx, pyvis
+  pip install --upgrade openpyxl networkx pyvis
+"""
+
+import re
+import sys
+import json
+import argparse
+from pathlib import Path
+import openpyxl
+import networkx as nx
+from pyvis.network import Network
+
+# ---------- 1. 引数 ----------
+def parse_args():
+    p = argparse.ArgumentParser(description="Excel formula map (depth-limited)")
+    p.add_argument("xlsx", help=".xlsx file path")
+    p.add_argument("root", nargs="?", default="",
+                   help="Root node (e.g. Sheet1!B2). Auto if omitted")
+    p.add_argument("--depth", type=int, default=None,
+                   help="Limit to nodes within N hops from root")
+    p.add_argument("--out", default="excel_formula_map.html",
+                   help="Output HTML name")
+    p.add_argument("--radial", action="store_true",
+                   help="Radial layout instead of top-down")
+    args, _ = p.parse_known_args()        # Jupyter の -f を無視
+    return args
+
+# ---------- 2. ユーティリティ ----------
+REF = re.compile(r"(?:'([^']+)'|([A-Za-z0-9_]+))?!?\$?[A-Z]{1,3}\$?[0-9]{1,7}", re.I)
+clean = lambda s: (s.replace("$", "").strip("'"))
+
+# ---------- 3. Excel → networkx ----------
+def build_graph(path: Path) -> nx.DiGraph:
+    wb = openpyxl.load_workbook(path, data_only=False)
+    G = nx.DiGraph()
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=False):
+            for c in row:
+                if c and c.data_type == "f":
+                    src = clean(f"{ws.title}!{c.coordinate}")
+                    for m in REF.finditer(c.value or ""):
+                        sht = m.group(1) or m.group(2) or ws.title
+                        tgt = clean(f"{sht}!{m.group(0).split('!')[-1]}")
+                        G.add_edge(src, tgt)
+    if G.number_of_nodes() == 0:
+        sys.exit("[ERROR] 数式が見つかりません。")
+    return G
+
+# ---------- 4. 深さ制限 ----------
+def trim_by_depth(G: nx.DiGraph, root: str, depth: int) -> nx.DiGraph:
+    dist = nx.single_source_shortest_path_length(G, root)
+    keep = {n for n, d in dist.items() if d <= depth}
+    print(f"[INFO] Depth ≤{depth}: {len(keep)} nodes → 部分グラフに切り取り")
+    return G.subgraph(keep).copy()
+
+# ---------- 5. レイアウトヘルパ ----------
+def set_hierarchical(net: Network, radial: bool):
+    if hasattr(net, "hierarchical_layout"):
+        net.hierarchical_layout(direction="LR" if radial else "UD",
+                                 sort_method="hubsize" if radial else "directed",
+                                 centralize=False)
+    else:
+        opts = {"layout":{"hierarchical":{"enabled":True,
+                "direction":"LR" if radial else "UD",
+                "sortMethod":"hubsize" if radial else "directed",
+                "nodeSpacing":120,"levelSeparation":150}}}
+        net.set_options(json.dumps(opts))
+
+def color_root(net: Network, root: str):
+    if hasattr(net, "get_node"):
+        nd = net.get_node(root)
+        if nd: nd["color"] = {"background":"#FFCC00","border":"#FF9900"}
+    else:
+        for n in net.nodes:
+            if n.get("id") == root:
+                n["color"] = {"background":"#FFCC00","border":"#FF9900"}
+                break
+
+# ---------- 6. 可視化 ----------
+def visualize(G: nx.DiGraph, root: str, out_html: Path, radial: bool):
+    net = Network(height="750px", width="100%", directed=True, bgcolor="#FFFFFF")
+    net.from_nx(G)
+    set_hierarchical(net, radial)
+    for n in net.nodes:
+        deg = G.degree(n["id"]); n["value"] = deg+1
+        n["title"] = f"{n['id']}<br>deg:{deg}"
+    color_root(net, root)
+    net.save_graph(str(out_html))
+    try: net.show(str(out_html))
+    except Exception: pass
+    print("[INFO] ✅ HTML:", out_html.resolve())
+
+# ---------- 7. main ----------
+def main():
+    args = parse_args()
+    xlsx = Path(args.xlsx).expanduser()
+    if not xlsx.is_file(): sys.exit(f"[ERROR] File not found: {xlsx}")
+    G = build_graph(xlsx)
+
+    root = clean(args.root)
+    if not root or root not in G:
+        root = max(G.in_degree, key=lambda x:x[1])[0]
+        print(f"[INFO] Root auto-selected: {root}")
+
+    if args.depth is not None:
+        G = trim_by_depth(G, root, args.depth)
+
+    visualize(G, root, Path(args.out), args.radial)
+
+if __name__ == "__main__":
+    main()
