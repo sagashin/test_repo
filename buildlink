@@ -1,13 +1,23 @@
+'================ Link Register Builder – Final =================
+'  1. 外部リンク (LinkSources) を抽出
+'  2. 数式セルを走査して Internal / External リンク列挙
+'  3. Link_Register シートを作り替え、台帳テーブルを出力
+'================================================================
 Option Explicit
-'================ Link Register builder (robust) ===============
+
 Sub BuildLinkRegister()
-    Const WS_NAME As String = "Link_Register"
+    Const WS_NAME   As String = "Link_Register"
+    Const ROOT_CELL As String = ""            '例 "Summary!B2"。"" なら Depth を計算しない
     
     Dim wsOut As Worksheet, nxtRow As Long
     Dim sh As Worksheet, rngF As Range, c As Range
-    Dim links As Variant, linkItem As Variant
+    Dim links As Variant, itm As Variant
+    Dim dictDepth As Object: Set dictDepth = CreateObject("Scripting.Dictionary")
     
-    '----- 出力シート準備 -----
+    '===== 0) Depth 計算の準備 ====================================
+    If ROOT_CELL <> "" Then dictDepth(ROOT_CELL) = 0
+    
+    '===== 1) 出力シートの作成 ===================================
     Application.DisplayAlerts = False
     On Error Resume Next: Worksheets(WS_NAME).Delete: On Error GoTo 0
     Application.DisplayAlerts = True
@@ -18,21 +28,22 @@ Sub BuildLinkRegister()
                                        "Type", "Target", "Note", "Depth")
     nxtRow = 2
     
-    '----- 外部リンクソース -----
+    '===== 2) 外部リンクソース ===================================
     links = ActiveWorkbook.LinkSources(xlExcelLinks)
     
-    If Not (IsEmpty(links) Or links Is Nothing) Then
-        If IsArray(links) Then
-            For Each linkItem In links
-                WriteRow wsOut, nxtRow, "", "", "External Source", CStr(linkItem)
-            Next linkItem
-        Else
-            'リンクが１件のみの場合に配列で返らないレアケース対策
+    Select Case True
+        Case IsArray(links)                       '複数リンク
+            For Each itm In links
+                WriteRow wsOut, nxtRow, "", "", "External Source", CStr(itm)
+            Next itm
+        
+        Case VarType(links) = vbString            'リンク 1 件だけ
             WriteRow wsOut, nxtRow, "", "", "External Source", CStr(links)
-        End If
-    End If
+        
+        'リンク 0 件 → スキップ
+    End Select
     
-    '----- シートごとの数式走査 -----
+    '===== 3) シートごとの数式セル走査 ============================
     For Each sh In Worksheets
         If sh.Name <> WS_NAME Then
             On Error Resume Next
@@ -54,6 +65,13 @@ Sub BuildLinkRegister()
                         tgt = FirstRef(c.Formula)
                         WriteRow wsOut, nxtRow, sh.Name, _
                                  c.Address(False, False), typ, tgt
+                        '----- Depth (最短距離) -------------------
+                        If ROOT_CELL <> "" Then
+                            If dictDepth.Exists(tgt) Then
+                                dictDepth(sh.Name & "!" & c.Address(False, False)) = _
+                                    dictDepth(tgt) + 1
+                            End If
+                        End If
                     End If
                 Next c
             End If
@@ -61,11 +79,22 @@ Sub BuildLinkRegister()
         End If
     Next sh
     
+    '===== 4) Depth 列を書き戻す（一括） ==========================
+    If ROOT_CELL <> "" Then
+        Dim r As Long, key As String
+        For r = 2 To nxtRow - 1
+            key = wsOut.Cells(r, 2).Value & "!" & wsOut.Cells(r, 3).Value
+            If dictDepth.Exists(key) Then wsOut.Cells(r, 7).Value = dictDepth(key)
+        Next r
+    End If
+    
     wsOut.Columns.AutoFit
     MsgBox "Link register refreshed: " & nxtRow - 2 & " rows", vbInformation
 End Sub
 
-'---------- 参照セル抽出 ----------
+'===============================================================
+'  先頭の参照セルを抽出（シンプル正規表現）
+'===============================================================
 Private Function FirstRef(f As String) As String
     With CreateObject("VBScript.RegExp")
         .Pattern = "('([^']+)'|[A-Za-z0-9_]+)?!?[$]?[A-Z]{1,3}[$]?\d+"
@@ -74,7 +103,9 @@ Private Function FirstRef(f As String) As String
     End With
 End Function
 
-'---------- 出力ヘルパ ----------
+'===============================================================
+'  台帳出力ヘルパ（note・depth は Optional）
+'===============================================================
 Private Sub WriteRow(ws As Worksheet, ByRef r As Long, _
                      sht As String, addr As String, typ As String, _
                      tgt As String, Optional note As String = "", _
