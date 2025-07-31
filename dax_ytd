@@ -1,0 +1,53 @@
+総保険料 = SUM('LR_by_latlon'[TOTAL_EP])
+
+EP_YTD = 
+CALCULATE (
+[総保険料],
+DATESYTD ( 'LR_by_latlon'[Year_Month].[Date] ) 
+)
+
+最終日付 = 
+CALCULATE (
+MAX ( 'LR_by_latlon'[Year_Month].[年] ), -- ←ファクトの日付列
+ALL ( 'LR_by_latlon'[Year_Month].[年] )
+)
+
+保険料_前年 = 
+VAR MaxDate = [最終日付]
+VAR CurrYear = SELECTEDVALUE ( 'LR_by_latlon'[Year_Month].[年] )
+VAR PrevYear = CurrYear - 1
+VAR RangeBegin = DATE ( PrevYear, 1, 1 )
+VAR RangeEnd =
+IF (
+CurrYear = MaxDate, -- 最新年なら…
+MAX('LR_by_latlon'[Year_Month]) - 365, -- データ最終日の 1 年前と同日
+DATE ( PrevYear, 12, 31 ) -- それ以外は前年 12/31
+)
+RETURN
+CALCULATE (
+[総保険料],
+DATESBETWEEN ( 'LR_by_latlon'[Year_Month].[Date], RangeBegin, RangeEnd )
+)
+
+前年EP_YTD = 
+VAR YTDRange =
+DATESYTD ( 'LR_by_latlon'[Year_Month].[Date] )
+VAR PYRange =
+SAMEPERIODLASTYEAR ( YTDRange )
+RETURN
+IF (
+NOT ISEMPTY ( PYRange ),
+CALCULATE ( [総保険料], PYRange )
+)
+
+前年YTD2 = 
+    if(SELECTEDVALUE('LR_by_latlon'[Year_Month].[年]) = [最終日付],
+    [保険料_前年],
+    [前年EP_YTD])
+
+EP成長率 = 
+DIVIDE (
+[EP_YTD] - [前年YTD2],
+[前年YTD2]
+)
+
