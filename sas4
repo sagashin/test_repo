@@ -1,0 +1,266 @@
+/**************************************************************************
+* パラメータ設定
+**************************************************************************/
+OPTIONS SOURCE NOTES MLOGIC COMPRESS = yes ;
+
+%include '\\10.27.0.159\RATE_E\saspgm\sas009\autoexec2.sas' ;
+
+libname sasds '\\10.27.0.159\rate_e\sasds\sas009\ss\梅田さんからの依頼\20250708';
+%let in_folder = %nrstr(\\10.27.0.159\rate_e\sasds\sas009\ss\梅田さんからの依頼\20250708);
+
+%let ext_date = 250724;
+%let out_file = contract_claim_joined_&ext_date..csv; 
+
+%put &out_file. &ext_date.;
+
+/* キー列名*/
+%let key1 = KEY_POLICY_NO;
+%let key2 = KEY_POLICY_ITEMNO;
+%let key3 = KEY_ORIG_INS_EFFECT_YY;
+%let key4 = KEY_COMPANY_CD;
+%let key5 = KEY_EXTRACT_MASTER_FLG;
+%let key6 = KEY_CLAIM_NO;
+%let key7 = EARNED_YYM;
+
+%let clm_col_beg = OD_KHN;
+%let clm_col_end = FPIC_KAI;
+
+/*
+KEY_POLICY_NO（証券番号）×KEY_POLICY_ITEMNO（枝番）×EARNED_YYM（経過年月）でレコードができています。
+証券に１台しか自動車が無い場合は、KEY_POLICY_ITEMNOはブランクになります。
+*/
+
+/*claim data*/
+data sasds.claim_&ext_date.;
+	set SASDS.LDWH_002;
+	EARNED_YYM =substr(ACCIDENT_DATE,1,6);
+run;
+
+proc summary data=sasds.claim_&ext_date. nway missing; 
+class &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7 KEY_TOKUKBN KEY_TOKUKBN2; 
+var PAID_AMT THISMONTH_OS_AMT PREVIOUSMONTH_OS_AMT Incurred_Loss ALAE; 
+output out=df_claim_1
+sum = PAID_AMT THISMONTH_OS_AMT PREVIOUSMONTH_OS_AMT Incurred_Loss ALAE 
+n = claim_cnt
+;
+run;
+
+proc summary data=df_claim_1 nway missing; 
+class &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7 KEY_TOKUKBN KEY_TOKUKBN2; 
+var PAID_AMT THISMONTH_OS_AMT PREVIOUSMONTH_OS_AMT Incurred_Loss ALAE; 
+output out=df_claim_1
+sum = PAID_AMT THISMONTH_OS_AMT PREVIOUSMONTH_OS_AMT Incurred_Loss ALAE 
+n = claim_cnt
+;
+run;
+
+proc sql;
+	create table df_claim_3 as
+	select &key1., &key2., &key3., &key4., &key5., &key7.,
+	count(distinct &key6.) as evt_cnt,
+	sum(PAID_AMT) as PAID_AMT,
+	sum(THISMONTH_OS_AMT) as THISMONTH_OS_AMT,
+	sum(PREVIOUSMONTH_OS_AMT) as PREVIOUSMONTH_OS_AMT,
+	sum(Incurred_Loss) as Incurred_Loss,
+	sum(ALAE) as ALAE
+	from sasds.claim_&ext_date.
+	group by &key1., &key2., &key3., &key4., &key5., &key7.;
+	quit;
+
+data a;
+	set sasds.claim_&ext_date.;
+	where KEY_POLICY_NO = "0001042106";
+run;
+
+/*claim count*/
+proc transpose data=df_claim_1 out=df_claim_cnt(drop=_label_ _name_) prefix=cnt_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var claim_cnt; /* 横展開 */
+run;
+
+/*paid*/
+proc transpose data=df_claim_1 out=df_claim_paid(drop=_label_ _name_) prefix=paid_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var PAID_AMT; /* 横展開 */
+run;
+
+/*os_curr*/
+proc transpose data=df_claim_1 out=df_claim_os_curr(drop=_label_ _name_) prefix=os_curr_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var THISMONTH_OS_AMT; /* 横展開 */
+run;
+
+/*os_prev*/
+proc transpose data=df_claim_1 out=df_claim_os_prev(drop=_label_ _name_) prefix=os_prev_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var PREVIOUSMONTH_OS_AMT; /* 横展開 */
+run;
+
+/*incurred*/
+proc transpose data=df_claim_1 out=df_claim_inc(drop=_name_) prefix=inc_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var Incurred_Loss; /* 横展開 */
+run;
+
+/*ALAE*/
+proc transpose data=df_claim_1 out=df_claim_ALAE(drop=_name_) prefix=ALAE_;
+by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+id KEY_TOKUKBN; /* 列名に claim_type が入る */
+var ALAE; /* 横展開 */
+run;
+
+/*merge*/
+data df_claim_wide;
+	merge df_claim_cnt df_claim_paid df_claim_os_curr 
+			df_claim_os_prev df_claim_inc df_claim_ALAE;
+	by &key1 &key2 &key3 &key4 &key5 /*&key6*/ &key7;
+	array n _numeric_; 
+		do over n; 
+		if missing(n) then n = 0; 
+	end;
+run;
+
+data sasds.df_claim_wide;
+	set df_claim_wide;
+	Total_cnt = sum(of cnt_&clm_col_beg.--cnt_&clm_col_end.);
+	Total_paid = sum(of paid_&clm_col_beg.--paid_&clm_col_end.);
+	Total_os_curr = sum(of os_curr_&clm_col_beg.--os_curr_&clm_col_end.);
+	Total_os_prev = sum(of os_prev_&clm_col_beg.--os_prev_&clm_col_end.);
+	Total_ALAE = sum(of ALAE_&clm_col_beg.--ALAE_&clm_col_end.);
+	Total_inc = sum(of inc_&clm_col_beg.--inc_&clm_col_end.);
+	Total_evt_cnt = 1;	
+run;
+/*
+data sasds.df_claim_wide;
+	set sasds.df_claim_wide;
+	Total_evt_cnt = 1;
+run;
+*/
+/*Contract dataの要約処理*/
+proc summary data=SASDS.DATA_31 nway missing; 
+class &key1 &key2 &key3 &key4 &key5 &key7 fx fY product_name address_name_kj /*NEW_RENEWAL_TYP*/ ; 
+var BI_EP--TOTAL_NOVE; 
+output out=df_cont_1
+sum = 
+n = record_cnt 
+;
+run;
+
+/**************************************************************************
+* キーで LEFT JOIN
+**************************************************************************/
+proc sql;
+create table sasds.auto_cont_clm_&ext_date. as
+select a.*,
+b.*
+from df_cont_1 as a
+left join sasds.df_claim_wide as b
+on a.&key1 = b.&key1
+and a.&key2 = b.&key2
+and a.&key3 = b.&key3
+and a.&key4 = b.&key4
+and a.&key5 = b.&key5
+and a.&key7 = b.&key7
+;
+quit;
+data sasds.auto_cont_clm_&ext_date.;
+	set sasds.auto_cont_clm_&ext_date.;
+		array n _numeric_; 
+		do over n; 
+		if missing(n) then n = 0; 
+	end;
+run;
+
+/**************************************************************************
+* 結果を CSV でエクスポート
+**************************************************************************/
+/*
+proc export data=sasds.auto_cont_clm_&ext_date.
+outfile="&in_folder.\&out_file."
+dbms=csv replace;
+run;
+*/
+/*fx fy別サマリ*/
+proc summary data=sasds.auto_cont_clm_&ext_date. nway missing; 
+class EARNED_YYM PRODUCT_NAME ADDRESS_NAME_KJ /*NEW_RENEWAL_TYP*/ fx fY; 
+var total_ep total_nove Total_cnt Total_paid Total_os_curr 
+	Total_os_prev Total_ALAE total_inc Total_evt_cnt; 
+output out=df_total_by_fx_fy
+sum = 
+n = record_cnt 
+;
+run;
+/*
+proc sql;
+	select count(*) as n_obs
+	from df_check;
+quit;
+*/
+/*
+data df_check3;
+	set SASDS.DATA_1;
+	where PRODUCT_NAME = "Military";
+run;
+*/
+
+proc export data=df_total_by_fx_fy
+outfile="&in_folder.\LR_by_latlon.csv"
+dbms=csv replace;
+run;
+
+/*Earned Month別*/
+proc summary data=sasds.auto_cont_clm_&ext_date. nway; 
+class EARNED_YYM; 
+var total_ep total_nove total_inc; 
+output out=sasds.df_total_by_EM
+sum = 
+n = record_cnt 
+;
+run;
+
+proc import
+	datafile="\\10.27.0.159\rate_e\sasds\sas009\ss\梅田さんからの依頼\20250708\LR_by_latlon.csv"
+	out=work.lr_by_ltlon
+	dbms=csv
+	replace;
+	datarow=2;
+run;
+
+/*
+proc summary data=sasds.claim_&ext_date. nway; 
+class EARNED_YYM; 
+var Incurred_Loss; 
+output out=sasds.df_claim_total_by_EM
+sum = 
+n = record_cnt 
+;
+run;
+
+proc summary data=sasds.df_claim_wide nway; 
+class EARNED_YYM; 
+var Total_inc; 
+output out=df_claim_wide_total_by_EM
+sum = 
+n = record_cnt 
+;
+run;
+
+
+proc sql;
+	select count(*) as n_obs
+	from df_claim_wide;
+quit;
+
+data df_inc_wide;
+	set WORK.DF_CLAIM_INC;
+		array n _numeric_; 
+		do over n; 
+		if missing(n) then n = 0; 
+	end;
+	Total_inc = sum(of inc_OD_KHN--inc_FPIC_KAI);
+run;
