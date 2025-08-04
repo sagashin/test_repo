@@ -1,0 +1,258 @@
+/*======================================================================
+  0) 事前設定
+----------------------------------------------------------------------*/
+%let orcluser2 = ***** ;   /*←環境に合わせて設定*/
+%let orclpw2   = ***** ;
+%let orclpath2 = ***** ;
+
+/*======================================================================
+  1) Branch を取り込んだメイン抽出  → sasds.data_1
+----------------------------------------------------------------------*/
+PROC SQL;
+    CONNECT TO oracle AS aiuprod
+        (user=&orcluser2 orapw=&orclpw2 path="&orclpath2");
+
+    CREATE TABLE sasds.data_1 AS
+    SELECT *
+    FROM CONNECTION TO aiuprod (
+
+        /*----------------------------------------------------------
+          1-1) SELECT 句
+        ----------------------------------------------------------*/
+        SELECT
+            /*======== 基本キー ========*/
+            fact.KEY_POLICY_NO,
+            fact.KEY_POLICY_ITEMNO,
+            fact.KEY_ORIG_INS_EFFECT_YY,
+            fact.KEY_COMPANY_CD,
+            fact.KEY_EXTRACT_MASTER_FLG,
+            fact.ORIG_INS_COMPANY_CD,
+            fact.NEW_RENEWAL_TYP,            /*added 20250730*/
+            ep_summ.EARNED_YYM,
+
+            /*======== 商品・ミリタリー系 ========*/
+            product.AUTO_PRODUCT_CD,
+            product.FLEET_FLG,
+            product.PRODUCT_NAME,
+            military.MILITARY_CARCLASS_CD,
+            military.MILITARY_GRADE_CD,
+            military.MILITARY_OD_A_INSURED_AMT,
+            military.MILITARY_OD_A_PRM,
+            military.MILITARY_OD_B_INSURED_AMT,
+            military.MILITARY_OD_B_PRM,
+            military.MILITARY_DISCOUNT_RATE,
+            military.MILITARY_SHORTTERM_RATE,
+            military.MILITARY_AO_CD,
+
+            /*======== エリア ========*/
+            plhldr.CRESTA_ZONE,
+            plhldr.CRESTA_CD,
+            plhldr.AREA_NAME,
+            plhldr.ADDRESS_CD,
+            addrss.ADDRESS_NAME_KN,
+            addrss.ADDRESS_NAME_KJ,
+            addrss.NEW_ZIP,
+
+            /*======== ★ Branch ========*/
+            prod_mst.BRANCH                                  AS BRANCH,
+
+            /*======== 集計値 ========*/
+            SUM(ep_summ.TOTAL_EARNED_PRM)   AS total_ep,
+            SUM(ep_summ.OD_EARNED_PRM)      AS od_ep,
+            SUM(ep_summ.BI_EARNED_PRM)      AS bi_ep,
+            SUM(ep_summ.PD_EARNED_PRM)      AS pd_ep,
+            SUM(ep_summ.PA_EARNED_PRM)      AS pa_ep,
+            SUM(ep_summ.PIC_EARNED_PRM)     AS pic_ep,
+            SUM(ep_summ.ESCORTP_EARNED_PRM) AS escortp_ep,
+            SUM(ep_summ.BIKE50CC_EARNED_PRM)AS bike50cc_ep,
+            SUM(ep_summ.OTHERS_EARNED_PRM)  AS others_ep,
+            SUM(ep_summ.TOTAL_NOVE)         AS total_nove
+
+        /*----------------------------------------------------------
+          1-2) FROM 句
+        ----------------------------------------------------------*/
+        FROM
+            PFM_AUTO_FACT            fact,
+            PFM_AUTO_MILITARY        military,
+            PFM_AUTO_EP_SUMM         ep_summ,
+            PFM_AUTO_PRODUCT         product,
+            (PFM_AUTO_POLICYHOLDER   plhldr
+                LEFT JOIN DWH_ADDRESS_MST addrss
+                       ON plhldr.ADDRESS_CD = addrss.ADDRESS_CD),
+            /*▼ Branch 用に追加した橋渡し２テーブル */
+            DWH_AUTO_FACT            dwh_fact,
+            DWH_CURRENT_PROD_MST     prod_mst
+
+        /*----------------------------------------------------------
+          1-3) WHERE (結合条件＋フィルタ)
+        ----------------------------------------------------------*/
+        WHERE
+            /* 期間フィルタ（上限のみ残す）*/
+            ep_summ.EARNED_YYM <= '202507' AND
+
+            /*=== 既存結合 ===*/
+            fact.KEY_POLICY_NO          = ep_summ.KEY_POLICY_NO AND
+            fact.KEY_POLICY_ITEMNO      = ep_summ.KEY_POLICY_ITEMNO AND
+            fact.KEY_ORIG_INS_EFFECT_YY = ep_summ.KEY_ORIG_INS_EFFECT_YY AND
+            fact.KEY_COMPANY_CD         = ep_summ.KEY_COMPANY_CD AND
+            fact.KEY_EXTRACT_MASTER_FLG = ep_summ.KEY_EXTRACT_MASTER_FLG AND
+
+            fact.PFM_AUTO_PRODUCT_KEY   = product.PFM_AUTO_PRODUCT_KEY AND
+            fact.PFM_AUTO_MILITARY_KEY  = military.PFM_AUTO_MILITARY_KEY AND
+            fact.PFM_AUTO_POLICYHOLDER_KEY = plhldr.PFM_AUTO_POLICYHOLDER_KEY AND
+
+            /*=== ▼新規結合 ===*/
+            fact.KEY_POLICY_NO          = dwh_fact.KEY_POLICY_NO AND
+            fact.KEY_POLICY_ITEMNO      = dwh_fact.KEY_POLICY_ITEMNO AND
+            fact.KEY_ORIG_INS_EFFECT_YY = dwh_fact.KEY_ORIG_INS_EFFECT_YY AND
+            fact.KEY_COMPANY_CD         = dwh_fact.KEY_COMPANY_CD AND
+            fact.KEY_EXTRACT_MASTER_FLG = dwh_fact.KEY_EXTRACT_MASTER_FLG AND
+
+            dwh_fact.OLD_PRODUCER_CD    = prod_mst.OLD_PRODUCER_CD
+
+        /*----------------------------------------------------------
+          1-4) GROUP BY （Branch も含める）
+        ----------------------------------------------------------*/
+        GROUP BY
+            fact.KEY_POLICY_NO,
+            fact.KEY_POLICY_ITEMNO,
+            fact.KEY_ORIG_INS_EFFECT_YY,
+            fact.KEY_COMPANY_CD,
+            fact.KEY_EXTRACT_MASTER_FLG,
+            fact.ORIG_INS_COMPANY_CD,
+            fact.NEW_RENEWAL_TYP,
+            ep_summ.EARNED_YYM,
+            product.AUTO_PRODUCT_CD,
+            product.FLEET_FLG,
+            product.PRODUCT_NAME,
+            military.MILITARY_CARCLASS_CD,
+            military.MILITARY_GRADE_CD,
+            military.MILITARY_OD_A_INSURED_AMT,
+            military.MILITARY_OD_A_PRM,
+            military.MILITARY_OD_B_INSURED_AMT,
+            military.MILITARY_OD_B_PRM,
+            military.MILITARY_DISCOUNT_RATE,
+            military.MILITARY_SHORTTERM_RATE,
+            military.MILITARY_AO_CD,
+            plhldr.CRESTA_ZONE,
+            plhldr.CRESTA_CD,
+            plhldr.AREA_NAME,
+            plhldr.ADDRESS_CD,
+            addrss.ADDRESS_NAME_KN,
+            addrss.ADDRESS_NAME_KJ,
+            addrss.NEW_ZIP,
+            prod_mst.BRANCH
+    );
+    DISCONNECT FROM aiuprod;
+QUIT;
+
+/*======================================================================
+  2) AIG のみ抽出 & Coverage-別 NOVE 計算  → sasds.data_11
+----------------------------------------------------------------------*/
+DATA sasds.data_11;
+    SET sasds.data_1;
+
+    /*AIG契約だけ残す*/
+    IF ORIG_INS_COMPANY_CD = 3;
+
+    /*Coverage毎のNOVE*/
+    bi_nove      = (bi_ep      > 0) * total_nove;
+    pd_nove      = (pd_ep      > 0) * total_nove;
+    pa_nove      = (pa_ep      > 0) * total_nove;
+    pic_nove     = (pic_ep     > 0) * total_nove;
+    od_nove      = (od_ep      > 0) * total_nove;
+    escortp_nove = (escortp_ep > 0) * total_nove;
+    bike50cc_nove= (bike50cc_ep> 0) * total_nove;
+    others_nove  = (others_ep  > 0) * total_nove;
+RUN;
+
+/*======================================================================
+  3) １回目キューブ  → sasds.data_2
+----------------------------------------------------------------------*/
+%Create_Cube_Data(
+    sasds.data_11,
+    sasds.data_2,
+    /*=== キー ===*/
+    EARNED_YYM
+    BRANCH
+    KEY_POLICY_NO
+    KEY_POLICY_ITEMNO
+    KEY_ORIG_INS_EFFECT_YY
+    KEY_COMPANY_CD
+    KEY_EXTRACT_MASTER_FLG
+    AUTO_PRODUCT_CD
+    FLEET_FLG
+    PRODUCT_NAME
+    ORIG_INS_COMPANY_CD
+    NEW_RENEWAL_TYP
+    ADDRESS_CD
+    ADDRESS_NAME_KJ
+    NEW_ZIP
+    ,
+    /*=== 集計項目 ===*/
+    bi_ep pd_ep pa_ep pic_ep od_ep escortp_ep bike50cc_ep others_ep total_ep
+    bi_nove pd_nove pa_nove pic_nove od_nove escortp_nove bike50cc_nove others_nove total_nove);
+
+/*======================================================================
+  4) 郵便ジオコード取り込み
+----------------------------------------------------------------------*/
+PROC IMPORT OUT=sasds.yubin_geocode_1
+    DATAFILE="\\10.27.0.159\rate_e\sasds\sas009\ss\梅田さんからの依頼\20250708\YUBIN_GEOCODE.xlsx"
+    DBMS=xlsx REPLACE;
+    GETNAMES=YES;
+RUN;
+
+/*======================================================================
+  5) データ整形＆マージ  → sasds.data_3
+----------------------------------------------------------------------*/
+/*ソート (Branch を含める)*/
+PROC SORT DATA=sasds.data_2;
+    BY BRANCH NEW_ZIP EARNED_YYM KEY_POLICY_NO KEY_POLICY_ITEMNO
+       KEY_ORIG_INS_EFFECT_YY KEY_COMPANY_CD KEY_EXTRACT_MASTER_FLG
+       AUTO_PRODUCT_CD FLEET_FLG PRODUCT_NAME ORIG_INS_COMPANY_CD
+       NEW_RENEWAL_TYP ADDRESS_CD ADDRESS_NAME_KJ;
+RUN;
+
+PROC SORT DATA=sasds.yubin_geocode_1;
+    BY postal_cd;
+RUN;
+
+DATA sasds.yubin_geocode_2;
+    SET sasds.yubin_geocode_1;
+    new_zip = postal_cd;
+RUN;
+
+DATA sasds.data_3;
+    MERGE sasds.data_2(IN=flg) sasds.yubin_geocode_2;
+    BY new_zip;
+    IF flg;
+RUN;
+
+/*======================================================================
+  6) ２回目キューブ（XY 付き） → sasds.data_31
+----------------------------------------------------------------------*/
+%Create_Cube_Data(
+    sasds.data_3,
+    sasds.data_31,
+    /*=== キー ===*/
+    EARNED_YYM
+    BRANCH
+    KEY_POLICY_NO
+    KEY_POLICY_ITEMNO
+    KEY_ORIG_INS_EFFECT_YY
+    KEY_COMPANY_CD
+    KEY_EXTRACT_MASTER_FLG
+    AUTO_PRODUCT_CD
+    FLEET_FLG
+    PRODUCT_NAME
+    ORIG_INS_COMPANY_CD
+    NEW_RENEWAL_TYP
+    ADDRESS_CD
+    ADDRESS_NAME_KJ
+    NEW_ZIP
+    fX
+    fY
+    ,
+    /*=== 集計項目 ===*/
+    bi_ep pd_ep pa_ep pic_ep od_ep escortp_ep bike50cc_ep others_ep total_ep
+    bi_nove pd_nove pa_nove pic_nove od_nove escortp_nove bike50cc_nove others_nove total_nove);
