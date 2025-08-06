@@ -1,0 +1,19 @@
+data sasds.claim_wide_final
+(index=(keys=(&keys))); /* インデックスで JOIN 高速化 */
+set claim_wide;
+
+array cnts cnt_&clm_col_beg.--cnt_&clm_col_end.;
+array paid paid_&clm_col_beg.--paid_&clm_col_end.;
+array os_c os_curr_&clm_col_beg.--os_curr_&clm_col_end.;
+array os_p os_prev_&clm_col_beg.--os_prev_&clm_col_end.;
+array incs inc_&clm_col_beg.--inc_&clm_col_end.;
+array alae ALAE_&clm_col_beg.--ALAE_&clm_col_end.;
+
+Total_cnt = sum(of cnts[*]);
+Total_paid = sum(of paid[*]);
+Total_os_curr = sum(of os_c[*]);
+Total_os_prev = sum(of os_p[*]);
+Total_inc = sum(of incs[*]);
+Total_ALAE = sum(of alae[*]);
+Total_evt_cnt = 1;
+run;
